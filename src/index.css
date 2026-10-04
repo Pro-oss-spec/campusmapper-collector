@@ -1022,3 +1022,288 @@ textarea:focus {
     border-radius: 14px 14px 0 0;
   }
 }
+
+
+.header-action {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-action > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--paper);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.header-link:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.header-link:first-child {
+  background: var(--flag);
+  color: var(--ink);
+  border-color: var(--flag);
+}
+
+
+/* ---------- Road Mapper ---------- */
+
+.road-recorder {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.road-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--forest-deep);
+  color: var(--paper);
+  border-radius: 16px;
+}
+
+.road-status > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border-radius: 50%;
+  background: #8a9a92;
+}
+
+.status-dot.active {
+  background: var(--flag);
+  animation: road-pulse 1.2s ease-out infinite;
+}
+
+@keyframes road-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 90, 31, 0.7);
+  }
+
+  100% {
+    box-shadow: 0 0 0 11px rgba(255, 90, 31, 0);
+  }
+}
+
+.gps-accuracy {
+  color: #c9d6cf;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+
+/* ---------- Road Statistics ---------- */
+
+.road-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.road-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+}
+
+.road-stat strong {
+  font-family: var(--font-head);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.road-stat span {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+
+/* ---------- Road Controls ---------- */
+
+.road-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.road-controls .btn {
+  flex: 1;
+}
+
+
+/* ---------- Road Form ---------- */
+
+.road-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+}
+
+.road-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.road-form input,
+.road-form select,
+.road-form textarea {
+  font-weight: 400;
+}
+
+.road-save-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.road-save-actions .btn {
+  flex: 1;
+}
+
+
+/* ---------- Road Instructions ---------- */
+
+.road-help {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+}
+
+.road-help ol {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.road-help li {
+  margin-bottom: 7px;
+}
+
+.road-help li:last-child {
+  margin-bottom: 0;
+}
+
+
+/* ---------- Road Mapper Mobile ---------- */
+
+@media (max-width: 420px) {
+  .header {
+    gap: 6px;
+    padding-left: 10px;
+    padding-right: 8px;
+  }
+
+  .header-title {
+    font-size: 1.2rem;
+  }
+
+  .header-link {
+    min-height: 38px;
+    padding: 6px 8px;
+    font-size: 0.82rem;
+  }
+
+  .road-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .road-stats {
+    gap: 8px;
+  }
+
+  .road-stat {
+    padding: 14px;
+  }
+
+  .road-stat strong {
+    font-size: 1.65rem;
+  }
+}
+
+
+/* ---------- Reduced Motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.active {
+    animation: none;
+  }
+}
+
+
+.road-map {
+width: 100%;
+height: 420px;
+min-height: 320px;
+overflow: hidden;
+border: 1.5px solid var(--line);
+border-radius: 16px;
+background: #dfe6df;
+}
+
+.road-map .leaflet-control-layers {
+border: 0;
+border-radius: 10px;
+overflow: hidden;
+}
+
+.road-map .leaflet-control-layers-toggle {
+width: 44px;
+height: 44px;
+}
+
+.road-gps-accuracy {
+color: #c9d6cf;
+font-size: 0.85rem;
+white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+.road-map {
+height: 360px;
+min-height: 280px;
+border-radius: 14px;
+}
+}
