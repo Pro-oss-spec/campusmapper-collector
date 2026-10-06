@@ -1,12 +1,15 @@
 import { HashRouter, Route, Routes } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { isConfigured } from './lib/supabase'
+import { fetchOsmRoads } from './lib/osmRoads'
 
 import Dashboard from './pages/Dashboard'
 import NewLocation from './pages/NewLocation'
 import Collection from './pages/Collection'
 import LocationDetails from './pages/LocationDetails'
 import RoadMapper from './pages/RoadMapper'
+import SavedRoads from './pages/SavedRoads'
+import CentralMap from './pages/CentralMap'
 
 function SetupNotice() {
   return (
@@ -109,6 +112,72 @@ function Gate() {
       <Route
         path="/roads/new"
         element={<RoadMapper />}
+      />
+
+      <Route
+        path="/roads"
+        element={<SavedRoads />}
+      />
+
+      <Route
+        path="/map"
+        element={<CentralMap />}
+      />
+
+      {/* Temporary OpenStreetMap test */}
+      <Route
+        path="/test-osm"
+        element={
+          <main className="center-screen">
+            <h1>OpenStreetMap Test</h1>
+
+            <p>
+              Testing OSM road retrieval around a public
+              campus area.
+            </p>
+
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                try {
+                  const roads = await fetchOsmRoads({
+                    // Temporary test area:
+                    // University of Nigeria, Nsukka
+                    south: 6.84,
+                    west: 7.37,
+                    north: 6.88,
+                    east: 7.42,
+                  })
+
+                  console.log(
+                    'OSM roads found:',
+                    roads.length
+                  )
+
+                  console.log(
+                    'OSM road data:',
+                    roads
+                  )
+
+                  alert(
+                    `OSM roads found: ${roads.length}`
+                  )
+                } catch (error) {
+                  console.error(
+                    'OSM test failed:',
+                    error
+                  )
+
+                  alert(
+                    `OSM test failed: ${error.message}`
+                  )
+                }
+              }}
+            >
+              🛣️ Test OSM Roads
+            </button>
+          </main>
+        }
       />
 
       <Route
