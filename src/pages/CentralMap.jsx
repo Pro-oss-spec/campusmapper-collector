@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
 
@@ -29,17 +29,50 @@ function formatDistance(meters) {
   }
 
   if (meters >= 1000) {
-    const kilometers = (meters / 1000).toFixed(2)
-    return kilometers + ' km'
+    return `${(meters / 1000).toFixed(2)} km`
   }
 
-  return Math.round(meters) + ' m'
+  return `${Math.round(meters)} m`
 }
 
 function normalizeSearchText(value) {
   return String(value || '')
     .toLowerCase()
     .trim()
+}
+
+function calculateStraightLineDistance(a, b) {
+  if (!a || !b) return null
+
+  const R = 6371000
+
+  const lat1 = (Number(a[0]) * Math.PI) / 180
+  const lat2 = (Number(b[0]) * Math.PI) / 180
+
+  const deltaLat =
+    ((Number(b[0]) - Number(a[0])) * Math.PI) / 180
+
+  const deltaLng =
+    ((Number(b[1]) - Number(a[1])) * Math.PI) / 180
+
+  const sinLat = Math.sin(deltaLat / 2)
+  const sinLng = Math.sin(deltaLng / 2)
+
+  const value =
+    sinLat * sinLat +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      sinLng *
+      sinLng
+
+  const c =
+    2 *
+    Math.atan2(
+      Math.sqrt(value),
+      Math.sqrt(1 - value)
+    )
+
+  return R * c
 }
 
 export default function CentralMap() {
@@ -53,12 +86,14 @@ export default function CentralMap() {
 
   const buildingLayerRef = useRef(null)
   const roadLayerRef = useRef(null)
+
   const placeMarkersRef = useRef(new Map())
   const destinationMarkerRef = useRef(null)
 
   const userMarkerRef = useRef(null)
   const userAccuracyRef = useRef(null)
   const lastUserLocationRef = useRef(null)
+
   const hasFittedUserLocationRef = useRef(false)
 
   const [places, setPlaces] = useState([])
@@ -76,6 +111,9 @@ export default function CentralMap() {
   const [locationStatus, setLocationStatus] = useState(
     'Detecting your location...'
   )
+
+  const [showSearch, setShowSearch] = useState(false)
+  const [showLayers, setShowLayers] = useState(false)
 
   async function loadMapData() {
     setLoading(true)
@@ -104,10 +142,10 @@ export default function CentralMap() {
       setPlaces(filteredPlaces)
       setRoads(filteredRoads)
       setSelectedPlace(null)
-      setSearchQuery('')
     } catch (err) {
       setError(
-        err.message || 'Could not load campus map data'
+        err.message ||
+          'Could not load campus map data'
       )
     } finally {
       setLoading(false)
@@ -118,25 +156,39 @@ export default function CentralMap() {
     loadMapData()
   }, [currentCampus?.id])
 
+  /*
+   * CREATE MAP
+   */
   useEffect(() => {
     if (!mapElementRef.current || mapRef.current) {
       return
     }
 
-    const campusLat = Number(currentCampus?.center_lat)
-    const campusLng = Number(currentCampus?.center_lng)
+    const campusLat = Number(
+      currentCampus?.center_lat
+    )
+
+    const campusLng = Number(
+      currentCampus?.center_lng
+    )
 
     const center =
       Number.isFinite(campusLat) &&
       Number.isFinite(campusLng)
         ? [campusLat, campusLng]
-        : [0, 0]
+        : [5.0336, 7.9286]
 
-    const map = L.map(mapElementRef.current).setView(
-      center,
-      16
-    )
+    const map = L.map(
+      mapElementRef.current,
+      {
+        zoomControl: false,
+        attributionControl: true,
+      }
+    ).setView(center, 16)
 
+    /*
+     * STREET MAP
+     */
     const street = L.tileLayer(
       'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
@@ -146,6 +198,9 @@ export default function CentralMap() {
       }
     )
 
+    /*
+     * SATELLITE MAP
+     */
     const satellite = L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       {
@@ -156,19 +211,9 @@ export default function CentralMap() {
 
     street.addTo(map)
 
-    L.control
-      .layers(
-        {
-          '🗺️ Street Map': street,
-          '🛰️ Satellite': satellite,
-        },
-        null,
-        {
-          position: 'topright',
-        }
-      )
-      .addTo(map)
-
+    /*
+     * LAYERS
+     */
     buildingLayerRef.current =
       L.layerGroup().addTo(map)
 
@@ -177,22 +222,103 @@ export default function CentralMap() {
 
     mapRef.current = map
 
+    /*
+     * CUSTOM MAP ZOOM CONTROL
+     */
+    L.control
+      .zoom({
+        position: 'bottomright',
+      })
+      .addTo(map)
+
+    /*
+     * CUSTOM BASE MAP SWITCHER
+     */
+    const BaseMapControl =
+      L.Control.extend({
+        options: {
+          position: 'topright',
+        },
+
+        onAdd() {
+          const container =
+            L.DomUtil.create(
+              'div',
+              'cm-map-control'
+            )
+
+          container.innerHTML = `
+            <button
+              type="button"
+              class="cm-map-control-button"
+              title="Change map style"
+              aria-label="Change map style"
+            >
+              🗺️
+            </button>
+          `
+
+          const button =
+            container.querySelector(
+              'button'
+            )
+
+          button.addEventListener(
+            'click',
+            () => {
+              if (
+                map.hasLayer(street)
+              ) {
+                map.removeLayer(street)
+                satellite.addTo(map)
+                button.textContent =
+                  '🛰️'
+              } else {
+                map.removeLayer(
+                  satellite
+                )
+                street.addTo(map)
+                button.textContent =
+                  '🗺️'
+              }
+            }
+          )
+
+          L.DomEvent.disableClickPropagation(
+            container
+          )
+
+          return container
+        },
+      })
+
+    map.addControl(
+      new BaseMapControl()
+    )
+
     setTimeout(() => {
       map.invalidateSize()
     }, 100)
 
     return () => {
       map.remove()
+
       mapRef.current = null
       buildingLayerRef.current = null
       roadLayerRef.current = null
+
       userMarkerRef.current = null
       userAccuracyRef.current = null
-      destinationMarkerRef.current = null
+      destinationMarkerRef.current =
+        null
+
       placeMarkersRef.current.clear()
     }
   }, [])
 
+  /*
+   * MOVE MAP WHEN CAMPUS CHANGES
+   */
   useEffect(() => {
     const map = mapRef.current
 
@@ -200,8 +326,13 @@ export default function CentralMap() {
       return
     }
 
-    const latitude = Number(currentCampus.center_lat)
-    const longitude = Number(currentCampus.center_lng)
+    const latitude = Number(
+      currentCampus.center_lat
+    )
+
+    const longitude = Number(
+      currentCampus.center_lng
+    )
 
     if (
       !Number.isFinite(latitude) ||
@@ -210,12 +341,22 @@ export default function CentralMap() {
       return
     }
 
-    map.setView(
+    map.flyTo(
       [latitude, longitude],
-      16
+      16,
+      {
+        animate: true,
+        duration: 0.7,
+      }
     )
+
+    hasFittedUserLocationRef.current =
+      false
   }, [currentCampus?.id])
 
+  /*
+   * LIVE GPS
+   */
   useEffect(() => {
     const map = mapRef.current
 
@@ -253,7 +394,8 @@ export default function CentralMap() {
           }
 
           const safeAccuracy =
-            Number.isFinite(accuracy) && accuracy > 0
+            Number.isFinite(accuracy) &&
+            accuracy > 0
               ? accuracy
               : 10
 
@@ -266,9 +408,16 @@ export default function CentralMap() {
             userLocation
 
           setLocationStatus(
-            'Location detected'
+            safeAccuracy <= 20
+              ? 'Good location accuracy'
+              : safeAccuracy <= 50
+                ? 'Fair location accuracy'
+                : 'Low location accuracy'
           )
 
+          /*
+           * USER DOT
+           */
           if (!userMarkerRef.current) {
             userMarkerRef.current =
               L.circleMarker(
@@ -277,7 +426,8 @@ export default function CentralMap() {
                   radius: 9,
                   color: '#ffffff',
                   weight: 3,
-                  fillColor: '#1976ff',
+                  fillColor:
+                    '#1976ff',
                   fillOpacity: 1,
                 }
               ).addTo(map)
@@ -295,18 +445,23 @@ export default function CentralMap() {
             )
           }
 
+          /*
+           * GPS ACCURACY CIRCLE
+           */
           if (!userAccuracyRef.current) {
             userAccuracyRef.current =
               L.circle(
                 userLocation,
                 {
-                  radius: Math.max(
-                    safeAccuracy,
-                    5
-                  ),
+                  radius:
+                    Math.max(
+                      safeAccuracy,
+                      5
+                    ),
                   color: '#1976ff',
                   weight: 1,
-                  fillColor: '#1976ff',
+                  fillColor:
+                    '#1976ff',
                   fillOpacity: 0.08,
                 }
               ).addTo(map)
@@ -316,36 +471,57 @@ export default function CentralMap() {
             )
 
             userAccuracyRef.current.setRadius(
-              Math.max(safeAccuracy, 5)
+              Math.max(
+                safeAccuracy,
+                5
+              )
             )
           }
 
+          /*
+           * FIRST GPS FIX
+           */
           if (
             !hasFittedUserLocationRef.current &&
             currentCampus
           ) {
-            const campusLat = Number(
-              currentCampus.center_lat
-            )
+            const campusLat =
+              Number(
+                currentCampus.center_lat
+              )
 
-            const campusLng = Number(
-              currentCampus.center_lng
-            )
+            const campusLng =
+              Number(
+                currentCampus.center_lng
+              )
 
             if (
-              Number.isFinite(campusLat) &&
-              Number.isFinite(campusLng)
+              Number.isFinite(
+                campusLat
+              ) &&
+              Number.isFinite(
+                campusLng
+              )
             ) {
               const bounds =
                 L.latLngBounds([
-                  [campusLat, campusLng],
+                  [
+                    campusLat,
+                    campusLng,
+                  ],
                   userLocation,
                 ])
 
-              map.fitBounds(bounds, {
-                padding: [70, 70],
-                maxZoom: 16,
-              })
+              map.fitBounds(
+                bounds,
+                {
+                  padding: [
+                    70,
+                    70,
+                  ],
+                  maxZoom: 16,
+                }
+              )
 
               hasFittedUserLocationRef.current =
                 true
@@ -358,21 +534,27 @@ export default function CentralMap() {
             geoError.message
           )
 
-          if (geoError.code === 1) {
+          if (
+            geoError.code === 1
+          ) {
             setLocationStatus(
-              'Location permission was denied.'
+              'Location permission denied'
             )
-          } else if (geoError.code === 2) {
+          } else if (
+            geoError.code === 2
+          ) {
             setLocationStatus(
-              'Your location could not be determined.'
+              'Location unavailable'
             )
-          } else if (geoError.code === 3) {
+          } else if (
+            geoError.code === 3
+          ) {
             setLocationStatus(
-              'Location request timed out.'
+              'Location request timed out'
             )
           } else {
             setLocationStatus(
-              'Could not detect your location.'
+              'Could not detect location'
             )
           }
         },
@@ -398,13 +580,20 @@ export default function CentralMap() {
         userAccuracyRef.current = null
       }
 
-      lastUserLocationRef.current = null
-      hasFittedUserLocationRef.current = false
+      lastUserLocationRef.current =
+        null
+
+      hasFittedUserLocationRef.current =
+        false
     }
   }, [currentCampus])
 
+  /*
+   * BUILDING MARKERS
+   */
   useEffect(() => {
-    const layer = buildingLayerRef.current
+    const layer =
+      buildingLayerRef.current
 
     if (!layer) {
       return
@@ -415,7 +604,8 @@ export default function CentralMap() {
 
     if (destinationMarkerRef.current) {
       destinationMarkerRef.current.remove()
-      destinationMarkerRef.current = null
+      destinationMarkerRef.current =
+        null
     }
 
     if (!showBuildings) {
@@ -423,82 +613,58 @@ export default function CentralMap() {
     }
 
     places.forEach((place) => {
+      const latitude = Number(
+        place.latitude
+      )
+
+      const longitude = Number(
+        place.longitude
+      )
+
       if (
-        !Number.isFinite(Number(place.latitude)) ||
-        !Number.isFinite(Number(place.longitude))
+        !Number.isFinite(
+          latitude
+        ) ||
+        !Number.isFinite(
+          longitude
+        )
       ) {
         return
       }
 
       const marker = L.marker(
-        [
-          Number(place.latitude),
-          Number(place.longitude),
-        ],
+        [latitude, longitude],
         {
           icon: pinIcon,
           title: place.name,
         }
       )
 
-      marker.bindTooltip(
-        place.name,
-        {
-          permanent: places.length <= 30,
-          direction: 'top',
-          offset: [0, -32],
-          className: 'cm-label',
-        }
-      )
-
-      const popup =
-        document.createElement('div')
-
-      popup.className = 'cm-popup'
-
-      if (place.cover_image) {
-        const image =
-          document.createElement('img')
-
-        image.src = place.cover_image
-        image.alt = place.name || 'Location'
-
-        popup.appendChild(image)
+      /*
+       * ONLY SHOW LABELS WHEN THERE
+       * ARE NOT TOO MANY BUILDINGS.
+       */
+      if (places.length <= 30) {
+        marker.bindTooltip(
+          place.name,
+          {
+            permanent: true,
+            direction: 'top',
+            offset: [
+              0,
+              -32,
+            ],
+            className:
+              'cm-label',
+          }
+        )
       }
 
-      const title =
-        document.createElement('strong')
-
-      title.textContent = place.name
-
-      popup.appendChild(title)
-
-      const category =
-        document.createElement('span')
-
-      category.textContent =
-        place.category || 'Location'
-
-      popup.appendChild(category)
-
-      const link =
-        document.createElement('a')
-
-      link.href =
-        '#/location/' + place.id
-
-      link.textContent =
-        'Open location'
-
-      link.className =
-        'cm-popup-link'
-
-      popup.appendChild(link)
-
-      marker.bindPopup(
-        popup,
-        {
-          minWidth: 180,
+      marker.on(
+        'click',
+        () => {
+          setSelectedPlace(place)
+          setSearchQuery('')
         }
       )
 
@@ -509,10 +675,17 @@ export default function CentralMap() {
         marker
       )
     })
-  }, [places, showBuildings])
+  }, [
+    places,
+    showBuildings,
+  ])
 
+  /*
+   * ROAD LAYER
+   */
   useEffect(() => {
-    const layer = roadLayerRef.current
+    const layer =
+      roadLayerRef.current
 
     if (!layer) {
       return
@@ -526,7 +699,9 @@ export default function CentralMap() {
 
     roads.forEach((road) => {
       if (
-        !Array.isArray(road.geometry) ||
+        !Array.isArray(
+          road.geometry
+        ) ||
         road.geometry.length < 2
       ) {
         return
@@ -537,11 +712,17 @@ export default function CentralMap() {
           (point) =>
             Array.isArray(point) &&
             point.length >= 2 &&
-            Number.isFinite(Number(point[0])) &&
-            Number.isFinite(Number(point[1]))
+            Number.isFinite(
+              Number(point[0])
+            ) &&
+            Number.isFinite(
+              Number(point[1])
+            )
         )
 
-      if (validPoints.length < 2) {
+      if (
+        validPoints.length < 2
+      ) {
         return
       }
 
@@ -549,79 +730,40 @@ export default function CentralMap() {
         L.polyline(
           validPoints,
           {
-            weight: 6,
-            opacity: 0.9,
+            weight: 5,
+            opacity: 0.85,
           }
         )
 
       line.bindTooltip(
-        '🛣️ ' +
-          (road.name ||
-            'CampusMapper Road'),
+        `🛣️ ${
+          road.name ||
+          'CampusMapper Road'
+        }`,
         {
           sticky: true,
-          className: 'cm-label',
+          className:
+            'cm-label',
         }
       )
 
-      const popup =
-        document.createElement('div')
-
-      popup.className =
-        'cm-popup'
-
-      const title =
-        document.createElement('strong')
-
-      title.textContent =
-        '🛣️ ' +
-        (road.name ||
-          'Unnamed Road')
-
-      popup.appendChild(title)
-
-      const type =
-        document.createElement('span')
-
-      type.textContent =
-        road.road_type ||
-        'Road'
-
-      popup.appendChild(type)
-
-      const distance =
-        document.createElement('span')
-
-      distance.textContent =
-        formatDistance(
-          road.distance_meters
-        )
-
-      popup.appendChild(distance)
-
-      if (road.description) {
-        const description =
-          document.createElement('p')
-
-        description.textContent =
-          road.description
-
-        popup.appendChild(
-          description
-        )
-      }
-
-      line.bindPopup(
-        popup,
-        {
-          minWidth: 180,
+      line.on(
+        'click',
+        () => {
+          setSelectedPlace(null)
         }
       )
 
       line.addTo(layer)
     })
-  }, [roads, showRoads])
+  }, [
+    roads,
+    showRoads,
+  ])
 
+  /*
+   * DESTINATION
+   */
   useEffect(() => {
     const map = mapRef.current
 
@@ -636,12 +778,17 @@ export default function CentralMap() {
     const destination =
       places.find(
         (place) =>
-          place.id === destinationId
+          place.id ===
+          destinationId
       )
 
     if (!destination) {
       return
     }
+
+    setSelectedPlace(
+      destination
+    )
 
     const latitude = Number(
       destination.latitude
@@ -652,42 +799,39 @@ export default function CentralMap() {
     )
 
     if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude)
+      !Number.isFinite(
+        latitude
+      ) ||
+      !Number.isFinite(
+        longitude
+      )
     ) {
       return
     }
-
-    setSelectedPlace(destination)
 
     if (!showBuildings) {
       setShowBuildings(true)
       return
     }
 
-    const existingMarker =
-      placeMarkersRef.current.get(
-        destination.id
-      )
-
-    if (!existingMarker) {
-      return
-    }
-
-    if (destinationMarkerRef.current) {
+    if (
+      destinationMarkerRef.current
+    ) {
       destinationMarkerRef.current.remove()
-      destinationMarkerRef.current = null
     }
 
     const destinationMarker =
       L.marker(
-        [latitude, longitude],
+        [
+          latitude,
+          longitude,
+        ],
         {
-          icon: destinationIcon,
+          icon:
+            destinationIcon,
           zIndexOffset: 1000,
           title:
-            'Destination: ' +
-            destination.name,
+            `Destination: ${destination.name}`,
         }
       )
 
@@ -695,145 +839,182 @@ export default function CentralMap() {
       'Destination',
       {
         direction: 'top',
-        offset: [0, -38],
-        className: 'cm-label',
+        offset: [
+          0,
+          -38,
+        ],
+        className:
+          'cm-label',
       }
     )
 
-    destinationMarker.addTo(map)
+    destinationMarker.addTo(
+      map
+    )
 
     destinationMarkerRef.current =
       destinationMarker
 
     map.flyTo(
-      [latitude, longitude],
+      [
+        latitude,
+        longitude,
+      ],
       18,
       {
         animate: true,
         duration: 0.9,
       }
     )
-
-    const openPopup = () => {
-      const marker =
-        placeMarkersRef.current.get(
-          destination.id
-        )
-
-      if (marker) {
-        marker.openPopup()
-      }
-    }
-
-    const timer =
-      window.setTimeout(
-        openPopup,
-        950
-      )
-
-    return () => {
-      window.clearTimeout(timer)
-    }
   }, [
     destinationId,
     places,
     showBuildings,
   ])
 
+  /*
+   * SEARCH
+   */
   const normalizedQuery =
-    normalizeSearchText(searchQuery)
+    normalizeSearchText(
+      searchQuery
+    )
 
   const searchResults =
-    normalizedQuery.length === 0
-      ? []
-      : places
-          .map((place) => {
-            const name =
-              normalizeSearchText(
-                place.name
-              )
+    useMemo(() => {
+      if (
+        normalizedQuery.length ===
+        0
+      ) {
+        return []
+      }
 
-            const category =
-              normalizeSearchText(
-                place.category
-              )
+      return places
+        .map((place) => {
+          const name =
+            normalizeSearchText(
+              place.name
+            )
 
-            const description =
-              normalizeSearchText(
-                place.description
-              )
+          const category =
+            normalizeSearchText(
+              place.category
+            )
 
-            const fieldNotes =
-              normalizeSearchText(
-                place.field_notes
-              )
+          const description =
+            normalizeSearchText(
+              place.description
+            )
 
-            let score = 0
+          const fieldNotes =
+            normalizeSearchText(
+              place.field_notes
+            )
 
-            if (name === normalizedQuery) {
-              score += 100
-            }
+          const faculty =
+            normalizeSearchText(
+              place.faculty
+            )
 
-            if (
-              name.startsWith(
-                normalizedQuery
-              )
-            ) {
-              score += 60
-            }
+          const department =
+            normalizeSearchText(
+              place.department
+            )
 
-            if (
-              name.includes(
-                normalizedQuery
-              )
-            ) {
-              score += 40
-            }
+          let score = 0
 
-            if (
-              category.includes(
-                normalizedQuery
-              )
-            ) {
-              score += 25
-            }
+          if (
+            name ===
+            normalizedQuery
+          ) {
+            score += 100
+          }
 
-            if (
-              description.includes(
-                normalizedQuery
-              )
-            ) {
-              score += 10
-            }
+          if (
+            name.startsWith(
+              normalizedQuery
+            )
+          ) {
+            score += 60
+          }
 
-            if (
-              fieldNotes.includes(
-                normalizedQuery
-              )
-            ) {
-              score += 5
-            }
+          if (
+            name.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 40
+          }
 
-            return {
-              place,
-              score,
-            }
-          })
-          .filter(
-            (item) => item.score > 0
-          )
-          .sort(
-            (a, b) =>
-              b.score - a.score ||
-              a.place.name.localeCompare(
-                b.place.name
-              )
-          )
-          .slice(0, 8)
-          .map(
-            (item) => item.place
-          )
+          if (
+            category.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 25
+          }
 
+          if (
+            faculty.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 25
+          }
+
+          if (
+            department.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 25
+          }
+
+          if (
+            description.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 10
+          }
+
+          if (
+            fieldNotes.includes(
+              normalizedQuery
+            )
+          ) {
+            score += 5
+          }
+
+          return {
+            place,
+            score,
+          }
+        })
+        .filter(
+          (item) =>
+            item.score > 0
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            a.place.name.localeCompare(
+              b.place.name
+            )
+        )
+        .slice(0, 8)
+        .map(
+          (item) =>
+            item.place
+        )
+    }, [
+      places,
+      normalizedQuery,
+    ])
+
+  /*
+   * SELECT BUILDING
+   */
   function selectPlace(place) {
     const map = mapRef.current
 
@@ -850,49 +1031,51 @@ export default function CentralMap() {
     )
 
     if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude)
+      !Number.isFinite(
+        latitude
+      ) ||
+      !Number.isFinite(
+        longitude
+      )
     ) {
       return
     }
 
     setSelectedPlace(place)
+    setSearchQuery('')
+    setShowSearch(false)
 
     if (!showBuildings) {
       setShowBuildings(true)
     }
 
     map.flyTo(
-      [latitude, longitude],
+      [
+        latitude,
+        longitude,
+      ],
       18,
       {
         animate: true,
-        duration: 0.8,
+        duration: 0.7,
       }
     )
 
-    const openMarker = () => {
+    setTimeout(() => {
       const marker =
         placeMarkersRef.current.get(
           place.id
         )
 
       if (marker) {
-        marker.openPopup()
+        marker.openTooltip()
       }
-    }
-
-    setTimeout(
-      openMarker,
-      850
-    )
+    }, 700)
   }
 
-  function clearSearch() {
-    setSearchQuery('')
-    setSelectedPlace(null)
-  }
-
+  /*
+   * FIT CAMPUS
+   */
   function fitCampus() {
     const map = mapRef.current
 
@@ -903,62 +1086,84 @@ export default function CentralMap() {
     const points = []
 
     if (showBuildings) {
-      places.forEach((place) => {
-        if (
-          Number.isFinite(
-            Number(place.latitude)
-          ) &&
-          Number.isFinite(
-            Number(place.longitude)
+      places.forEach(
+        (place) => {
+          const lat = Number(
+            place.latitude
           )
-        ) {
-          points.push([
-            Number(place.latitude),
-            Number(place.longitude),
-          ])
+
+          const lng = Number(
+            place.longitude
+          )
+
+          if (
+            Number.isFinite(
+              lat
+            ) &&
+            Number.isFinite(
+              lng
+            )
+          ) {
+            points.push([
+              lat,
+              lng,
+            ])
+          }
         }
-      })
+      )
     }
 
     if (showRoads) {
-      roads.forEach((road) => {
-        if (
-          !Array.isArray(
-            road.geometry
-          )
-        ) {
-          return
-        }
-
-        road.geometry.forEach(
-          (point) => {
-            if (
-              Array.isArray(point) &&
-              Number.isFinite(
-                Number(point[0])
-              ) &&
-              Number.isFinite(
-                Number(point[1])
-              )
-            ) {
-              points.push([
-                Number(point[0]),
-                Number(point[1]),
-              ])
-            }
+      roads.forEach(
+        (road) => {
+          if (
+            !Array.isArray(
+              road.geometry
+            )
+          ) {
+            return
           }
-        )
-      })
+
+          road.geometry.forEach(
+            (point) => {
+              if (
+                Array.isArray(
+                  point
+                ) &&
+                Number.isFinite(
+                  Number(
+                    point[0]
+                  )
+                ) &&
+                Number.isFinite(
+                  Number(
+                    point[1]
+                  )
+                )
+              ) {
+                points.push([
+                  Number(
+                    point[0]
+                  ),
+                  Number(
+                    point[1]
+                  ),
+                ])
+              }
+            }
+          )
+        }
+      )
     }
 
     if (points.length > 0) {
-      const bounds =
-        L.latLngBounds(points)
-
       map.fitBounds(
-        bounds,
+        L.latLngBounds(points),
         {
-          padding: [50, 50],
+          padding: [
+            50,
+            50,
+          ],
           maxZoom: 18,
         }
       )
@@ -981,8 +1186,12 @@ export default function CentralMap() {
     }
   }
 
+  /*
+   * MY LOCATION
+   */
   function goToMyLocation() {
     const map = mapRef.current
+
     const location =
       lastUserLocationRef.current
 
@@ -998,23 +1207,58 @@ export default function CentralMap() {
       return
     }
 
-    map.setView(
+    map.flyTo(
       location,
       18,
       {
         animate: true,
+        duration: 0.7,
       }
     )
+  }
+
+  /*
+   * SELECTED PLACE DISTANCE
+   */
+  const selectedDistance =
+    selectedPlace &&
+    lastUserLocationRef.current
+      ? calculateStraightLineDistance(
+          lastUserLocationRef.current,
+          [
+            Number(
+              selectedPlace.latitude
+            ),
+            Number(
+              selectedPlace.longitude
+            ),
+          ]
+        )
+      : null
+
+  /*
+   * CLOSE SELECTED PLACE
+   */
+  function closeSelectedPlace() {
+    setSelectedPlace(null)
+
+    if (
+      destinationMarkerRef.current
+    ) {
+      destinationMarkerRef.current.remove()
+      destinationMarkerRef.current =
+        null
+    }
   }
 
   return (
     <>
       <Header
-        title="Central Campus Map"
+        title="CampusMapper"
         backTo="/"
         action={
           <Link
-            to="/roads/new"
+            to="/road-mapper"
             className="header-link"
           >
             + Road
@@ -1022,365 +1266,417 @@ export default function CentralMap() {
         }
       />
 
-      <main className="page">
-        <section className="panel">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent:
-                'space-between',
-              alignItems: 'center',
-              gap: '12px',
-              flexWrap: 'wrap',
-            }}
-          >
+      <main className="cm-map-page">
+        {/* TOP CAMPUS BAR */}
+        <div className="cm-map-topbar">
+          <div className="cm-campus-context">
+            <span className="cm-campus-pin">
+              📍
+            </span>
+
             <div>
+              <span className="cm-campus-label">
+                Campus
+              </span>
+
               <strong>
                 {currentCampus?.name ||
                   'Campus Map'}
               </strong>
-
-              <p
-                className="muted"
-                style={{
-                  margin: '4px 0 0',
-                }}
-              >
-                {places.length} locations •{' '}
-                {roads.length} mapped roads
-              </p>
-
-              <p
-                className="muted"
-                style={{
-                  margin: '4px 0 0',
-                }}
-              >
-                📍 {locationStatus}
-              </p>
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                flexWrap: 'wrap',
-              }}
-            >
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={goToMyLocation}
-              >
-                📍 My Location
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={fitCampus}
-              >
-                Fit Campus
-              </button>
             </div>
           </div>
-        </section>
 
-        <section className="panel">
-          <strong>
-            Search Campus
-          </strong>
-
-          <div
-            style={{
-              position: 'relative',
-              marginTop: '12px',
-            }}
+          <button
+            type="button"
+            className="cm-search-trigger"
+            onClick={() =>
+              setShowSearch(true)
+            }
+            aria-label="Search campus"
           >
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                alignItems: 'center',
-              }}
-            >
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) =>
-                  setSearchQuery(
-                    e.target.value
-                  )
-                }
-                placeholder="Search buildings, departments, halls..."
-                aria-label="Search campus locations"
-                style={{
-                  width: '100%',
-                  minHeight: '44px',
-                  padding:
-                    '10px 42px 10px 14px',
-                  border:
-                    '1px solid var(--line-dark)',
-                  borderRadius: '10px',
-                  background:
-                    'var(--surface)',
-                  color: 'var(--ink)',
-                  fontSize: '16px',
-                  outline: 'none',
-                  boxSizing:
-                    'border-box',
-                }}
-              />
+            🔎
+          </button>
+        </div>
 
-              {searchQuery && (
+        {/* MAP */}
+        <section className="cm-map-shell">
+          <div
+            ref={mapElementRef}
+            className="cm-main-map"
+          />
+
+          {/* SEARCH OVERLAY */}
+          {showSearch && (
+            <div className="cm-search-overlay">
+              <div className="cm-search-box">
                 <button
                   type="button"
-                  onClick={clearSearch}
-                  aria-label="Clear search"
-                  style={{
-                    position:
-                      'absolute',
-                    right: '10px',
-                    top: '50%',
-                    transform:
-                      'translateY(-50%)',
-                    border: 'none',
-                    background:
-                      'transparent',
-                    color:
-                      'var(--ink-soft)',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    lineHeight: 1,
-                    width: '36px',
-                    height: '36px',
+                  className="cm-search-back"
+                  onClick={() => {
+                    setShowSearch(false)
+                    setSearchQuery('')
                   }}
+                  aria-label="Close search"
                 >
-                  ×
+                  ←
                 </button>
-              )}
-            </div>
 
-            {normalizedQuery && (
-              <div
-                style={{
-                  marginTop: '8px',
-                  border:
-                    '1px solid var(--line)',
-                  borderRadius: '10px',
-                  background:
-                    'var(--surface)',
-                  overflow: 'hidden',
-                }}
-              >
-                {searchResults.length > 0 ? (
-                  <>
-                    {searchResults.map(
+                <input
+                  autoFocus
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) =>
+                    setSearchQuery(
+                      event.target.value
+                    )
+                  }
+                  placeholder="Where are you going?"
+                  aria-label="Search campus locations"
+                />
+
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="cm-search-clear"
+                    onClick={() =>
+                      setSearchQuery('')
+                    }
+                    aria-label="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              {normalizedQuery && (
+                <div className="cm-search-results">
+                  {searchResults.length > 0 ? (
+                    searchResults.map(
                       (place) => (
                         <button
                           key={place.id}
                           type="button"
+                          className="cm-search-result"
                           onClick={() =>
                             selectPlace(
                               place
                             )
                           }
-                          style={{
-                            display:
-                              'block',
-                            width: '100%',
-                            textAlign:
-                              'left',
-                            border: 'none',
-                            borderBottom:
-                              '1px solid var(--line)',
-                            background:
-                              selectedPlace?.id ===
-                              place.id
-                                ? 'var(--primary-soft)'
-                                : 'transparent',
-                            color:
-                              'var(--ink)',
-                            padding:
-                              '12px 14px',
-                            cursor:
-                              'pointer',
-                          }}
                         >
-                          <strong
-                            style={{
-                              display:
-                                'block',
-                              marginBottom:
-                                '3px',
-                            }}
-                          >
-                            📍 {place.name}
-                          </strong>
+                          <span className="cm-result-icon">
+                            🏢
+                          </span>
 
-                          <span
-                            className="muted"
-                            style={{
-                              fontSize:
-                                '13px',
-                            }}
-                          >
-                            {place.category ||
-                              'Location'}
+                          <span>
+                            <strong>
+                              {place.name}
+                            </strong>
+
+                            <small>
+                              {place.category ||
+                                'Location'}
+
+                              {place.department
+                                ? ` • ${place.department}`
+                                : ''}
+                            </small>
+                          </span>
+
+                          <span className="cm-result-arrow">
+                            →
                           </span>
                         </button>
                       )
-                    )}
+                    )
+                  ) : (
+                    <div className="cm-no-results">
+                      <span>🔎</span>
 
-                    {searchResults.length ===
-                      8 && (
-                      <p
-                        className="muted"
-                        style={{
-                          margin: 0,
-                          padding:
-                            '9px 14px',
-                          fontSize:
-                            '12px',
-                          borderTop:
-                            '1px solid var(--line)',
-                        }}
-                      >
-                        Showing the best
-                        matches. Keep typing
-                        to narrow your search.
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p
-                    className="muted"
-                    style={{
-                      margin: 0,
-                      padding: '14px',
-                    }}
-                  >
-                    No matching locations
-                    found in{' '}
-                    {currentCampus?.name ||
-                      'this campus'}.
-                  </p>
-                )}
+                      <strong>
+                        No matching locations
+                      </strong>
+
+                      <small>
+                        Try a building,
+                        department, hall or
+                        landmark.
+                      </small>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!normalizedQuery && (
+                <div className="cm-search-hint">
+                  <span>
+                    🔎
+                  </span>
+
+                  <div>
+                    <strong>
+                      Find your way around campus
+                    </strong>
+
+                    <small>
+                      Search for buildings,
+                      departments, halls,
+                      libraries and more.
+                    </small>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* FLOATING CONTROLS */}
+          {!showSearch && (
+            <div className="cm-floating-controls">
+              <button
+                type="button"
+                className="cm-floating-button"
+                onClick={
+                  goToMyLocation
+                }
+                title="My location"
+                aria-label="Go to my location"
+              >
+                📍
+              </button>
+
+              <button
+                type="button"
+                className="cm-floating-button"
+                onClick={
+                  fitCampus
+                }
+                title="Fit campus"
+                aria-label="Fit campus"
+              >
+                ⛶
+              </button>
+
+              <button
+                type="button"
+                className={
+                  `cm-floating-button ${
+                    showLayers
+                      ? 'is-active'
+                      : ''
+                  }`
+                }
+                onClick={() =>
+                  setShowLayers(
+                    (value) =>
+                      !value
+                  )
+                }
+                title="Map layers"
+                aria-label="Map layers"
+              >
+                ☰
+              </button>
+            </div>
+          )}
+
+          {/* LAYERS MENU */}
+          {showLayers && (
+            <div className="cm-layer-menu">
+              <strong>
+                Map
+              </strong>
+
+              <label>
+                <input
+                  type="checkbox"
+                  checked={
+                    showBuildings
+                  }
+                  onChange={(event) =>
+                    setShowBuildings(
+                      event.target.checked
+                    )
+                  }
+                />
+
+                <span>
+                  🏢 Buildings
+                </span>
+              </label>
+
+              <label>
+                <input
+                  type="checkbox"
+                  checked={
+                    showRoads
+                  }
+                  onChange={(event) =>
+                    setShowRoads(
+                      event.target.checked
+                    )
+                  }
+                />
+
+                <span>
+                  🛣️ Campus roads
+                </span>
+              </label>
+
+              <div className="cm-layer-status">
+                <span className="cm-live-dot" />
+                {locationStatus}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          <p
-            className="muted"
-            style={{
-              marginTop: '10px',
-              marginBottom: 0,
-            }}
-          >
-            Try searching for a building,
-            department, library, hall, bank,
-            health centre, or category.
-          </p>
+          {/* MAP STATUS */}
+          {loading && (
+            <div className="cm-map-loading">
+              <span className="cm-spinner" />
+              Loading campus...
+            </div>
+          )}
+
+          {error && (
+            <div
+              className="cm-map-error"
+              role="alert"
+            >
+              <strong>
+                Could not load campus
+              </strong>
+
+              <button
+                type="button"
+                onClick={
+                  loadMapData
+                }
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* SELECTED BUILDING CARD */}
+          {selectedPlace && (
+            <div className="cm-place-card">
+              <button
+                type="button"
+                className="cm-place-close"
+                onClick={
+                  closeSelectedPlace
+                }
+                aria-label="Close building card"
+              >
+                ×
+              </button>
+
+              {selectedPlace.cover_image && (
+                <img
+                  src={
+                    selectedPlace.cover_image
+                  }
+                  alt={
+                    selectedPlace.name
+                  }
+                  className="cm-place-image"
+                />
+              )}
+
+              <div className="cm-place-content">
+                <div className="cm-place-heading">
+                  <span className="cm-place-icon">
+                    🏢
+                  </span>
+
+                  <div>
+                    <strong>
+                      {selectedPlace.name}
+                    </strong>
+
+                    <span>
+                      {selectedPlace.category ||
+                        'Campus location'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="cm-place-meta">
+                  {selectedDistance !==
+                    null && (
+                    <span>
+                      📍{' '}
+                      {formatDistance(
+                        selectedDistance
+                      )}{' '}
+                      away
+                    </span>
+                  )}
+
+                  {selectedPlace.faculty && (
+                    <span>
+                      🎓{' '}
+                      {
+                        selectedPlace.faculty
+                      }
+                    </span>
+                  )}
+                </div>
+
+                <div className="cm-place-actions">
+                  <Link
+                    to={`/navigation?place=${selectedPlace.id}`}
+                    className="cm-direction-button"
+                  >
+                    🧭 Get Directions
+                  </Link>
+
+                  <Link
+                    to={`/location/${selectedPlace.id}`}
+                    className="cm-details-button"
+                  >
+                    Details →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
-        <section className="panel">
-          <strong>
-            Map Layers
-          </strong>
+        {/* SMALL INFORMATION BAR */}
+        <div className="cm-map-info">
+          <span>
+            <strong>
+              {places.length}
+            </strong>{' '}
+            locations
+          </span>
 
-          <div
-            style={{
-              display: 'flex',
-              gap: '16px',
-              flexWrap: 'wrap',
-              marginTop: '12px',
-            }}
+          <span className="cm-info-divider">
+            •
+          </span>
+
+          <span>
+            <strong>
+              {roads.length}
+            </strong>{' '}
+            mapped roads
+          </span>
+
+          <span className="cm-info-spacer" />
+
+          <span
+            className={
+              locationStatus
+                .toLowerCase()
+                .includes('good')
+                ? 'cm-location-good'
+                : ''
+            }
           >
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={showBuildings}
-                onChange={(e) =>
-                  setShowBuildings(
-                    e.target.checked
-                  )
-                }
-              />
-
-              🏢 Buildings
-            </label>
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={showRoads}
-                onChange={(e) =>
-                  setShowRoads(
-                    e.target.checked
-                  )
-                }
-              />
-
-              🛣️ CampusMapper Roads
-            </label>
-          </div>
-
-          <p
-            className="muted"
-            style={{
-              marginTop: '10px',
-              marginBottom: 0,
-            }}
-          >
-            The reference map shows existing
-            mapped roads. CampusMapper roads
-            are drawn on top.
-          </p>
-        </section>
-
-        {loading && (
-          <p className="muted">
-            Loading campus map...
-          </p>
-        )}
-
-        {error && (
-          <div
-            className="banner banner-error"
-            role="alert"
-          >
-            {error}
-
-            <button
-              type="button"
-              className="link-btn"
-              onClick={loadMapData}
-            >
-              Try again
-            </button>
-          </div>
-        )}
-
-        <div
-          ref={mapElementRef}
-          className="map"
-          style={{
-            height: '70vh',
-            minHeight: '500px',
-          }}
-        />
+            <span className="cm-live-dot" />
+            {locationStatus}
+          </span>
+        </div>
       </main>
     </>
   )

@@ -1,61 +1,213 @@
-import { useEffect, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { Link } from 'react-router-dom'
+
 import Header from '../components/Header'
 import LocationForm from '../components/LocationForm'
 import GPSCapture from '../components/GPSCapture'
 import PhotoGrid from '../components/PhotoGrid'
-import { useApp } from '../context/AppContext'
-import { createPlace } from '../lib/places'
-import { PHOTO_TYPES, accuracyLevel, formatAccuracy, formatCoord } from '../lib/location'
 
-const STEPS = ['Details', 'GPS', 'Photos', 'Notes', 'Review']
+import { useApp } from '../context/AppContext'
+
+import {
+  createPlace,
+  fetchPlaces,
+} from '../lib/places'
+
+import {
+  PHOTO_TYPES,
+  accuracyLevel,
+  formatAccuracy,
+  formatCoord,
+} from '../lib/location'
+
+const STEPS = [
+  'Details',
+  'GPS',
+  'Photos',
+  'Notes',
+  'Review',
+]
 
 export default function NewLocation() {
-  const { campuses, categories, currentCampus } = useApp()
+  const {
+    campuses,
+    categories,
+    currentCampus,
+  } = useApp()
 
   const emptyValues = () => ({
-    campusId: currentCampus.id,
+    campusId: currentCampus?.id || '',
     name: '',
     category: '',
+    faculty: '',
+    department: '',
     description: '',
     fieldNotes: '',
   })
 
   const [step, setStep] = useState(0)
-  const [values, setValues] = useState(emptyValues)
+  const [values, setValues] =
+    useState(emptyValues)
+
   const [gps, setGps] = useState(null)
-  const [photos, setPhotos] = useState({})
-  const [saving, setSaving] = useState(false)
-  const [progress, setProgress] = useState(null)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(null)
+  const [photos, setPhotos] =
+    useState({})
 
-  const hasData = Boolean(values.name || gps || Object.keys(photos).length)
+  const [existingPlaces, setExistingPlaces] =
+    useState([])
 
-  // Warn before the tab closes with unsaved work
+  const [saving, setSaving] =
+    useState(false)
+
+  const [progress, setProgress] =
+    useState(null)
+
+  const [error, setError] =
+    useState('')
+
+  const [saved, setSaved] =
+    useState(null)
+
+  const hasData = Boolean(
+    values.name ||
+      gps ||
+      Object.keys(photos).length
+  )
+
+  /*
+   * Keep the selected campus in the form
+   * when the global campus changes.
+   */
   useEffect(() => {
-    if (!hasData || saved) return undefined
+    if (!currentCampus?.id) return
+
+    setValues((previous) => {
+      if (
+        previous.campusId === currentCampus.id
+      ) {
+        return previous
+      }
+
+      return {
+        ...previous,
+        campusId: currentCampus.id,
+      }
+    })
+  }, [currentCampus?.id])
+
+  /*
+   * Load existing CampusMapper locations.
+   * These become live place-name suggestions.
+   */
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadExistingPlaces() {
+      try {
+        const places = await fetchPlaces()
+
+        if (!cancelled) {
+          setExistingPlaces(places)
+        }
+      } catch (err) {
+        console.error(
+          'Could not load existing places:',
+          err
+        )
+      }
+    }
+
+    loadExistingPlaces()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /*
+   * Warn before leaving the page
+   * with unsaved collection work.
+   */
+  useEffect(() => {
+    if (!hasData || saved) {
+      return undefined
+    }
+
     const warn = (e) => {
       e.preventDefault()
       e.returnValue = ''
     }
-    window.addEventListener('beforeunload', warn)
-    return () => window.removeEventListener('beforeunload', warn)
+
+    window.addEventListener(
+      'beforeunload',
+      warn
+    )
+
+    return () =>
+      window.removeEventListener(
+        'beforeunload',
+        warn
+      )
   }, [hasData, saved])
 
-  const patch = (changes) => setValues((v) => ({ ...v, ...changes }))
+  const placeSuggestions = useMemo(() => {
+    if (!values.campusId) {
+      return []
+    }
 
-  const setPhoto = (type, slot) =>
-    setPhotos((prev) => {
-      const next = { ...prev }
-      if (slot) next[type] = slot
-      else delete next[type]
+    return existingPlaces
+      .filter(
+        (place) =>
+          place.campus_id ===
+          values.campusId
+      )
+      .map((place) => place.name)
+      .filter(Boolean)
+  }, [
+    existingPlaces,
+    values.campusId,
+  ])
+
+  const patch = (changes) => {
+    setValues((previous) => ({
+      ...previous,
+      ...changes,
+    }))
+  }
+
+  const setPhoto = (type, slot) => {
+    setPhotos((previous) => {
+      const next = {
+        ...previous,
+      }
+
+      if (slot) {
+        next[type] = slot
+      } else {
+        delete next[type]
+      }
+
       return next
     })
+  }
 
   function canContinue() {
-    if (step === 0) return Boolean(values.name.trim() && values.category && values.campusId)
-    if (step === 1) return Boolean(gps)
+    if (step === 0) {
+      return Boolean(
+        values.name.trim() &&
+          values.category &&
+          values.campusId
+      )
+    }
+
+    if (step === 1) {
+      return Boolean(gps)
+    }
+
     return true
   }
 
@@ -63,16 +215,32 @@ export default function NewLocation() {
     setSaving(true)
     setError('')
     setProgress(null)
+
     try {
       const id = await createPlace(
-        { ...values, latitude: gps.latitude, longitude: gps.longitude, gpsAccuracy: gps.accuracy },
+        {
+          ...values,
+          latitude: gps.latitude,
+          longitude: gps.longitude,
+          gpsAccuracy: gps.accuracy,
+        },
         photos,
-        (done, total) => setProgress({ done, total })
+        (done, total) =>
+          setProgress({
+            done,
+            total,
+          })
       )
-      setSaved({ id, name: values.name.trim() })
+
+      setSaved({
+        id,
+        name: values.name.trim(),
+      })
     } catch (err) {
       setError(
-        `Could not save. ${err.message || ''} Check your connection and tap Save Location again. Everything you entered is still here.`
+        `Could not save. ${
+          err.message || ''
+        } Check your connection and tap Save Location again. Everything you entered is still here.`
       )
     } finally {
       setSaving(false)
@@ -86,25 +254,47 @@ export default function NewLocation() {
     setStep(0)
     setSaved(null)
     setError('')
+    setProgress(null)
   }
 
   if (saved) {
     return (
       <>
         <Header title="Location saved" />
+
         <main className="page">
           <div className="success">
-            <h2>{saved.name} is saved</h2>
-            <p>The photos and coordinates are now in your collection and on the map.</p>
+            <h2>
+              {saved.name} is saved
+            </h2>
+
+            <p>
+              The photos and coordinates are
+              now in your collection and on
+              the map.
+            </p>
           </div>
+
           <div className="stack">
-            <button type="button" className="btn btn-flag btn-lg" onClick={startAnother}>
+            <button
+              type="button"
+              className="btn btn-flag btn-lg"
+              onClick={startAnother}
+            >
               Add another location
             </button>
-            <Link to="/collection" className="btn btn-primary btn-lg">
+
+            <Link
+              to="/collection"
+              className="btn btn-primary btn-lg"
+            >
               View Collection
             </Link>
-            <Link to={`/location/${saved.id}`} className="btn btn-ghost">
+
+            <Link
+              to={`/location/${saved.id}`}
+              className="btn btn-ghost"
+            >
               Open this record
             </Link>
           </div>
@@ -113,138 +303,337 @@ export default function NewLocation() {
     )
   }
 
-  const photoCount = PHOTO_TYPES.filter((t) => photos[t.key]).length
-  const campus = campuses.find((c) => c.id === values.campusId)
-  const gpsLevel = gps ? accuracyLevel(gps.accuracy) : 'unknown'
+  const photoCount =
+    PHOTO_TYPES.filter(
+      (t) => photos[t.key]
+    ).length
+
+  const campus = campuses.find(
+    (c) => c.id === values.campusId
+  )
+
+  const gpsLevel = gps
+    ? accuracyLevel(gps.accuracy)
+    : 'unknown'
 
   return (
     <>
-      <Header title="New location" backTo="/" />
+      <Header
+        title="New location"
+        backTo="/"
+      />
+
       <main className="page">
-        <nav className="steps" aria-label="Progress">
+        <nav
+          className="steps"
+          aria-label="Progress"
+        >
           <p className="steps-label">
-            Step {step + 1} of {STEPS.length}: {STEPS[step]}
+            Step {step + 1} of{' '}
+            {STEPS.length}: {STEPS[step]}
           </p>
+
           <ol className="steps-bar">
             {STEPS.map((name, i) => (
-              <li key={name} className={i < step ? 'done' : i === step ? 'current' : ''} aria-current={i === step ? 'step' : undefined}>
-                <span className="sr-only">{name}</span>
+              <li
+                key={name}
+                className={
+                  i < step
+                    ? 'done'
+                    : i === step
+                    ? 'current'
+                    : ''
+                }
+                aria-current={
+                  i === step
+                    ? 'step'
+                    : undefined
+                }
+              >
+                <span className="sr-only">
+                  {name}
+                </span>
               </li>
             ))}
           </ol>
         </nav>
 
         <div className="step-body">
+          {/* DETAILS */}
           {step === 0 && (
             <>
-              <h2 className="step-title">Which place are you standing at?</h2>
-              <LocationForm values={values} onChange={patch} campuses={campuses} categories={categories} mode="details" />
+              <h2 className="step-title">
+                Which place are you standing at?
+              </h2>
+
+              <LocationForm
+                values={values}
+                onChange={patch}
+                campuses={campuses}
+                categories={categories}
+                mode="details"
+                placeSuggestions={
+                  placeSuggestions
+                }
+              />
             </>
           )}
 
+          {/* GPS */}
           {step === 1 && (
             <>
-              <h2 className="step-title">Capture the coordinates</h2>
-              <p className="step-help">Stand at the main entrance or the centre of the building, outdoors if you can.</p>
-              <GPSCapture value={gps} onChange={setGps} />
+              <h2 className="step-title">
+                Capture the coordinates
+              </h2>
+
+              <p className="step-help">
+                Stand at the main entrance or
+                the centre of the building,
+                outdoors if you can.
+              </p>
+
+              <GPSCapture
+                value={gps}
+                onChange={setGps}
+              />
             </>
           )}
 
+          {/* PHOTOS */}
           {step === 2 && (
             <>
-              <h2 className="step-title">Take the photos</h2>
-              <p className="step-help">Add as many as you can. Take Photo opens your camera. Select Photo uses your gallery.</p>
-              <PhotoGrid photos={photos} onChange={setPhoto} />
+              <h2 className="step-title">
+                Take the photos
+              </h2>
+
+              <p className="step-help">
+                Add as many as you can. Take
+                Photo opens your camera. Select
+                Photo uses your gallery.
+              </p>
+
+              <PhotoGrid
+                photos={photos}
+                onChange={setPhoto}
+              />
             </>
           )}
 
+          {/* NOTES */}
           {step === 3 && (
             <>
-              <h2 className="step-title">Anything to note?</h2>
-              <LocationForm values={values} onChange={patch} campuses={campuses} categories={categories} mode="notes" />
+              <h2 className="step-title">
+                Anything to note?
+              </h2>
+
+              <LocationForm
+                values={values}
+                onChange={patch}
+                campuses={campuses}
+                categories={categories}
+                mode="notes"
+              />
             </>
           )}
 
+          {/* REVIEW */}
           {step === 4 && (
             <>
-              <h2 className="step-title">Check before saving</h2>
+              <h2 className="step-title">
+                Check before saving
+              </h2>
 
-              {(!gps || gpsLevel === 'poor') && (
+              {(!gps ||
+                gpsLevel === 'poor') && (
                 <div className="banner banner-warn">
-                  {gps ? `GPS accuracy is weak (${formatAccuracy(gps.accuracy)}). You can go back and recapture.` : 'No GPS reading yet.'}
+                  {gps
+                    ? `GPS accuracy is weak (${formatAccuracy(
+                        gps.accuracy
+                      )}). You can go back and recapture.`
+                    : 'No GPS reading yet.'}
                 </div>
               )}
-              {photoCount === 0 && <div className="banner banner-note">No photos added. You can still save, or go back and add some.</div>}
+
+              {photoCount === 0 && (
+                <div className="banner banner-note">
+                  No photos added. You can still
+                  save, or go back and add some.
+                </div>
+              )}
 
               <dl className="review">
                 <div className="review-row">
                   <dt>Place</dt>
+
                   <dd>
-                    <strong>{values.name}</strong>
+                    <strong>
+                      {values.name}
+                    </strong>
+
                     <br />
-                    {values.category} at {campus ? campus.name : ''}
+
+                    {values.category} at{' '}
+                    {campus
+                      ? campus.name
+                      : ''}
+
+                    {values.faculty && (
+                      <>
+                        <br />
+                        <span className="muted">
+                          {values.faculty}
+                        </span>
+                      </>
+                    )}
+
+                    {values.department && (
+                      <>
+                        <br />
+                        <span className="muted">
+                          {values.department}
+                        </span>
+                      </>
+                    )}
+
                     {values.description && (
                       <>
                         <br />
-                        <span className="muted">{values.description}</span>
+                        <span className="muted">
+                          {values.description}
+                        </span>
                       </>
                     )}
                   </dd>
-                  <button type="button" className="link-btn" onClick={() => setStep(0)}>
+
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      setStep(0)
+                    }
+                  >
                     Change
                   </button>
                 </div>
 
                 <div className="review-row">
                   <dt>GPS</dt>
+
                   <dd>
                     {gps ? (
                       <>
-                        {formatCoord(gps.latitude)}, {formatCoord(gps.longitude)}
+                        {formatCoord(
+                          gps.latitude
+                        )}
+                        ,{' '}
+                        {formatCoord(
+                          gps.longitude
+                        )}
+
                         <br />
-                        <span className="muted">Accuracy {formatAccuracy(gps.accuracy)}</span>
+
+                        <span className="muted">
+                          Accuracy{' '}
+                          {formatAccuracy(
+                            gps.accuracy
+                          )}
+                        </span>
                       </>
                     ) : (
-                      <span className="muted">Not captured</span>
+                      <span className="muted">
+                        Not captured
+                      </span>
                     )}
                   </dd>
-                  <button type="button" className="link-btn" onClick={() => setStep(1)}>
+
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      setStep(1)
+                    }
+                  >
                     Change
                   </button>
                 </div>
 
                 <div className="review-row review-photos">
-                  <dt>Photos ({photoCount})</dt>
+                  <dt>
+                    Photos ({photoCount})
+                  </dt>
+
                   <dd>
                     {photoCount ? (
                       <div className="thumb-row">
-                        {PHOTO_TYPES.filter((t) => photos[t.key]).map((t) => (
-                          <figure key={t.key}>
-                            <img src={photos[t.key].previewUrl} alt={t.label} />
-                            <figcaption>{t.label}</figcaption>
+                        {PHOTO_TYPES.filter(
+                          (t) =>
+                            photos[t.key]
+                        ).map((t) => (
+                          <figure
+                            key={t.key}
+                          >
+                            <img
+                              src={
+                                photos[t.key]
+                                  .previewUrl
+                              }
+                              alt={t.label}
+                            />
+
+                            <figcaption>
+                              {t.label}
+                            </figcaption>
                           </figure>
                         ))}
                       </div>
                     ) : (
-                      <span className="muted">None</span>
+                      <span className="muted">
+                        None
+                      </span>
                     )}
                   </dd>
-                  <button type="button" className="link-btn" onClick={() => setStep(2)}>
+
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      setStep(2)
+                    }
+                  >
                     Change
                   </button>
                 </div>
 
                 <div className="review-row">
                   <dt>Notes</dt>
-                  <dd>{values.fieldNotes ? values.fieldNotes : <span className="muted">None</span>}</dd>
-                  <button type="button" className="link-btn" onClick={() => setStep(3)}>
+
+                  <dd>
+                    {values.fieldNotes ? (
+                      values.fieldNotes
+                    ) : (
+                      <span className="muted">
+                        None
+                      </span>
+                    )}
+                  </dd>
+
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      setStep(3)
+                    }
+                  >
                     Change
                   </button>
                 </div>
               </dl>
 
               {error && (
-                <div className="banner banner-error" role="alert">
+                <div
+                  className="banner banner-error"
+                  role="alert"
+                >
                   {error}
                 </div>
               )}
@@ -254,19 +643,49 @@ export default function NewLocation() {
 
         <div className="wizard-footer">
           {step > 0 && (
-            <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setStep(step - 1)}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={saving}
+              onClick={() =>
+                setStep(step - 1)
+              }
+            >
               Back
             </button>
           )}
-          {step < STEPS.length - 1 ? (
-            <button type="button" className="btn btn-primary btn-grow" disabled={!canContinue()} onClick={() => setStep(step + 1)}>
+
+          {step <
+          STEPS.length - 1 ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-grow"
+              disabled={!canContinue()}
+              onClick={() =>
+                setStep(step + 1)
+              }
+            >
               Next
             </button>
           ) : (
-            <button type="button" className="btn btn-flag btn-grow" disabled={saving || !gps || !values.name.trim()} onClick={save}>
+            <button
+              type="button"
+              className="btn btn-flag btn-grow"
+              disabled={
+                saving ||
+                !gps ||
+                !values.name.trim()
+              }
+              onClick={save}
+            >
               {saving
                 ? progress
-                  ? `Uploading photo ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`
+                  ? `Uploading photo ${Math.min(
+                      progress.done + 1,
+                      progress.total
+                    )} of ${
+                      progress.total
+                    }`
                   : 'Saving...'
                 : 'Save Location'}
             </button>
