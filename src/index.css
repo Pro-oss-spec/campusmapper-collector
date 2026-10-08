@@ -3230,3 +3230,406 @@ input[type="checkbox"] {
     display: none;
   }
 }
+
+/* =========================================================
+   ROAD MAPPER
+   ========================================================= */
+
+.road-recorder {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+.road-map-card {
+  position: relative;
+  height: min(62vh, 620px);
+  min-height: 420px;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: #dfe7e2;
+  box-shadow: var(--shadow);
+}
+
+.road-map {
+  position: absolute;
+  inset: 0;
+}
+
+.road-campus-badge {
+  position: absolute;
+  z-index: 500;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100% - 28px);
+  padding: 9px 13px 9px 9px;
+  border: 1px solid rgba(255,255,255,.8);
+  border-radius: 14px;
+  background: rgba(255,255,255,.96);
+  box-shadow: var(--shadow);
+}
+
+.road-campus-badge > span {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  background: var(--primary-soft);
+}
+
+.road-campus-badge small,
+.road-campus-badge strong {
+  display: block;
+}
+
+.road-campus-badge small {
+  color: var(--ink-muted);
+  font-size: 9px;
+}
+
+.road-campus-badge strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.road-gps-status {
+  position: absolute;
+  z-index: 500;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.94);
+  color: var(--ink-soft);
+  font-size: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.road-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.road-stats > div {
+  padding: 15px 10px;
+  text-align: center;
+}
+
+.road-stats > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.road-stats strong,
+.road-stats span {
+  display: block;
+}
+
+.road-stats strong {
+  color: var(--ink);
+  font-family: var(--font-head);
+  font-size: 22px;
+}
+
+.road-stats span {
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.road-controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.road-primary-button,
+.road-secondary-button,
+.road-danger-button {
+  min-height: 46px;
+  flex: 1;
+  border: 0;
+  border-radius: 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.road-primary-button {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.road-primary-button:hover {
+  background: var(--primary-dark);
+}
+
+.road-secondary-button {
+  border: 1px solid var(--line-dark);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.road-secondary-button:hover {
+  background: var(--surface-soft);
+}
+
+.road-danger-button {
+  background: var(--destination-soft);
+  color: var(--destination);
+}
+
+.road-danger-button:hover {
+  background: #ffe2df;
+}
+
+.road-error {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(229,57,53,.18);
+  border-radius: 12px;
+  background: var(--destination-soft);
+  color: var(--destination);
+  font-size: 11px;
+}
+
+.road-error strong {
+  white-space: nowrap;
+}
+
+/* Save form */
+
+.road-form {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.road-form-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 16px;
+}
+
+.road-form-heading small {
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.road-form-heading h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-family: var(--font-head);
+  font-size: 23px;
+}
+
+.road-form-heading > span {
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.road-form label {
+  display: block;
+  margin-top: 13px;
+}
+
+.road-form label > span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.road-form input,
+.road-form select,
+.road-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+
+.road-form input,
+.road-form select {
+  min-height: 43px;
+  padding: 0 11px;
+}
+
+.road-form textarea {
+  min-height: 80px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+
+.road-form input:focus,
+.road-form select:focus,
+.road-form textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.road-save-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.road-save-button,
+.road-cancel-button {
+  min-height: 45px;
+  border-radius: 11px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.road-save-button {
+  flex: 1;
+  border: 0;
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.road-save-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.road-cancel-button {
+  padding: 0 18px;
+  border: 1px solid var(--line-dark);
+  background: var(--surface);
+  color: var(--ink-soft);
+}
+
+/* Help */
+
+.road-help {
+  margin-top: 14px;
+  padding: 15px 17px;
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.road-help strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.road-help p {
+  margin: 7px 0 12px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.road-help > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.road-help > div span:nth-child(odd) {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* Recorder marker */
+
+.road-recorder-marker {
+  background: transparent;
+  border: 0;
+}
+
+.road-recorder-marker span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow:
+    0 0 0 5px rgba(25,118,255,.18),
+    var(--shadow);
+}
+
+/* Mobile */
+
+@media (max-width: 640px) {
+  .road-recorder {
+    padding: 10px;
+  }
+
+  .road-map-card {
+    height: 55vh;
+    min-height: 390px;
+    border-radius: 18px;
+  }
+
+  .road-stats strong {
+    font-size: 19px;
+  }
+
+  .road-stats span {
+    font-size: 9px;
+  }
+
+  .road-form {
+    padding: 15px;
+  }
+
+  .road-form-heading h2 {
+    font-size: 21px;
+  }
+
+  .road-save-actions {
+    flex-direction: column;
+  }
+
+  .road-cancel-button {
+    width: 100%;
+  }
+}
