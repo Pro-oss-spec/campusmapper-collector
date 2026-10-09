@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import L from 'leaflet'
 
@@ -9,6 +9,9 @@ import {
   calculateRouteDistance,
 } from '../lib/roads'
 
+const DEFAULT_CENTER = [5.0336, 7.9286]
+const DEFAULT_ZOOM = 17
+
 const recorderIcon = L.divIcon({
   className: 'road-recorder-marker',
   html: '<span></span>',
@@ -17,11 +20,11 @@ const recorderIcon = L.divIcon({
 })
 
 function formatDistance(meters) {
-  if (!Number.isFinite(Number(meters))) {
+  const value = Number(meters)
+
+  if (!Number.isFinite(value) || value < 0) {
     return '0 m'
   }
-
-  const value = Number(meters)
 
   if (value >= 1000) {
     return `${(value / 1000).toFixed(2)} km`
@@ -30,32 +33,48 @@ function formatDistance(meters) {
   return `${Math.round(value)} m`
 }
 
+function getCampusCenter(campus) {
+  const latitude = Number(campus?.center_lat)
+  const longitude = Number(campus?.center_lng)
+
+  if (
+    campus?.center_lat != null &&
+    campus?.center_lng != null &&
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  ) {
+    return [latitude, longitude]
+  }
+
+  return DEFAULT_CENTER
+}
+
 export default function RoadMapper() {
   const navigate = useNavigate()
   const { currentCampus } = useApp()
 
   const mapElementRef = useRef(null)
   const mapRef = useRef(null)
-
   const routeLineRef = useRef(null)
   const currentMarkerRef = useRef(null)
-
   const watchIdRef = useRef(null)
-
   const pointsRef = useRef([])
+
+  const recordingRef = useRef(false)
+  const pausedRef = useRef(false)
+  const gpsCenteredRef = useRef(false)
 
   const [points, setPoints] = useState([])
   const [distance, setDistance] = useState(0)
-
   const [recording, setRecording] = useState(false)
   const [paused, setPaused] = useState(false)
-
   const [saving, setSaving] = useState(false)
-
   const [error, setError] = useState('')
-  const [gpsStatus, setGpsStatus] = useState(
-    'Ready to record'
-  )
+  const [gpsStatus, setGpsStatus] = useState('Ready to record')
 
   const [form, setForm] = useState({
     name: '',
@@ -64,52 +83,45 @@ export default function RoadMapper() {
     fieldNotes: '',
   })
 
-  /*
-   * CREATE MAP
-   */
-  useEffect(() => {
+  const stopGpsWatch = useCallback(() => {
     if (
-      !mapElementRef.current ||
-      mapRef.current
+      watchIdRef.current !== null &&
+      typeof navigator !== 'undefined' &&
+      navigator.geolocation
     ) {
-      return
+      navigator.geolocation.clearWatch(watchIdRef.current)
     }
 
-    const latitude = Number(
-      currentCampus?.center_lat
-    )
+    watchIdRef.current = null
+  }, [])
 
-    const longitude = Number(
-      currentCampus?.center_lng
-    )
+  // Initialize Leaflet once for this page instance.
+  useEffect(() => {
+    const element = mapElementRef.current
 
-    const center =
-      Number.isFinite(latitude) &&
-      Number.isFinite(longitude)
-        ? [latitude, longitude]
-        : [5.0336, 7.9286]
+    if (!element || mapRef.current) {
+      return undefined
+    }
 
-    const map = L.map(
-      mapElementRef.current,
-      {
+    let map
+
+    try {
+      map = L.map(element, {
         zoomControl: false,
         attributionControl: true,
-      }
-    ).setView(center, 17)
+      }).setView(getCampusCenter(currentCampus), DEFAULT_ZOOM)
 
-    const street = L.tileLayer(
-      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      {
-        maxZoom: 19,
-        attribution:
-          '&copy; OpenStreetMap contributors',
-      }
-    )
+      mapRef.current = map
 
-    street.addTo(map)
+      L.tileLayer(
+        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap contributors',
+        }
+      ).addTo(map)
 
-    routeLineRef.current =
-      L.polyline([], {
+      routeLineRef.current = L.polyline([], {
         color: '#F45B2A',
         weight: 6,
         opacity: 0.9,
@@ -117,430 +129,274 @@ export default function RoadMapper() {
         lineJoin: 'round',
       }).addTo(map)
 
-    mapRef.current = map
-
-    L.control
-      .zoom({
+      L.control.zoom({
         position: 'bottomright',
+      }).addTo(map)
+
+      requestAnimationFrame(() => {
+        if (mapRef.current === map) {
+          map.invalidateSize()
+        }
       })
-      .addTo(map)
+    } catch (err) {
+      console.error('Road Mapper map initialization failed:', err)
 
-    setTimeout(() => {
-      map.invalidateSize()
-    }, 150)
-
-    return () => {
-      if (
-        watchIdRef.current !== null &&
-        navigator.geolocation
-      ) {
-        navigator.geolocation.clearWatch(
-          watchIdRef.current
-        )
+      if (map) {
+        map.remove()
       }
 
-      watchIdRef.current = null
+      mapRef.current = null
+      routeLineRef.current = null
 
-      map.remove()
+      setError(
+        'The map could not be initialized. Check your connection and reload the page.'
+      )
+    }
+
+    return () => {
+      stopGpsWatch()
+
+      recordingRef.current = false
+      pausedRef.current = false
+
+      if (mapRef.current) {
+        mapRef.current.remove()
+      }
 
       mapRef.current = null
       routeLineRef.current = null
       currentMarkerRef.current = null
+      gpsCenteredRef.current = false
     }
-  }, [])
+  }, [stopGpsWatch])
 
-  /*
-   * CHANGE MAP CENTER WHEN CAMPUS CHANGES
-   */
+  // Update the map when the selected campus changes.
   useEffect(() => {
     const map = mapRef.current
 
-    if (
-      !map ||
-      !currentCampus
-    ) {
+    if (!map || gpsCenteredRef.current) {
       return
     }
 
-    const latitude = Number(
-      currentCampus.center_lat
-    )
+    map.setView(getCampusCenter(currentCampus), DEFAULT_ZOOM)
+  }, [
+    currentCampus?.id,
+    currentCampus?.center_lat,
+    currentCampus?.center_lng,
+  ])
 
-    const longitude = Number(
-      currentCampus.center_lng
-    )
+  const handleGpsPosition = useCallback((position) => {
+    const latitude = Number(position.coords.latitude)
+    const longitude = Number(position.coords.longitude)
+    const accuracy = Number(position.coords.accuracy)
 
     if (
       !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude)
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
     ) {
       return
     }
 
-    map.setView(
-      [latitude, longitude],
-      17
-    )
-  }, [currentCampus?.id])
-
-  /*
-   * CLEAN GPS WATCH ON UNMOUNT
-   */
-  useEffect(() => {
-    return () => {
-      stopGpsWatch()
-    }
-  }, [])
-
-  /*
-   * START GPS WATCH
-   */
-  function startGpsWatch() {
-    if (!navigator.geolocation) {
-      setError(
-        'Your browser does not support GPS location.'
-      )
-      setGpsStatus(
-        'GPS not supported'
-      )
-      return false
-    }
-
-    if (
-      watchIdRef.current !== null
-    ) {
-      return true
-    }
-
-    setError('')
-    setGpsStatus(
-      'Waiting for GPS...'
-    )
-
-    const watchId =
-      navigator.geolocation.watchPosition(
-        handleGpsPosition,
-        handleGpsError,
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 20000,
-        }
-      )
-
-    watchIdRef.current =
-      watchId
-
-    return true
-  }
-
-  /*
-   * STOP GPS WATCH
-   */
-  function stopGpsWatch() {
-    if (
-      watchIdRef.current !== null &&
-      navigator.geolocation
-    ) {
-      navigator.geolocation.clearWatch(
-        watchIdRef.current
-      )
-    }
-
-    watchIdRef.current = null
-  }
-
-  /*
-   * GPS SUCCESS
-   */
-  function handleGpsPosition(
-    position
-  ) {
-    const latitude = Number(
-      position.coords.latitude
-    )
-
-    const longitude = Number(
-      position.coords.longitude
-    )
-
-    const accuracy = Number(
-      position.coords.accuracy
-    )
-
-    if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude)
-    ) {
-      return
-    }
-
-    const location = [
-      latitude,
-      longitude,
-    ]
-
+    const location = [latitude, longitude]
     const map = mapRef.current
 
     if (!map) {
       return
     }
 
-    /*
-     * LIVE GPS MARKER
-     */
-    if (
-      !currentMarkerRef.current
-    ) {
-      currentMarkerRef.current =
-        L.marker(
-          location,
-          {
-            icon: recorderIcon,
-            zIndexOffset: 1000,
-          }
-        ).addTo(map)
+    if (!currentMarkerRef.current) {
+      currentMarkerRef.current = L.marker(location, {
+        icon: recorderIcon,
+        zIndexOffset: 1000,
+      }).addTo(map)
 
-      currentMarkerRef.current.bindTooltip(
-        'Current location',
-        {
-          direction: 'top',
-          offset: [0, -10],
-        }
-      )
+      currentMarkerRef.current.bindTooltip('Current location', {
+        direction: 'top',
+        offset: [0, -10],
+      })
     } else {
-      currentMarkerRef.current.setLatLng(
-        location
-      )
+      currentMarkerRef.current.setLatLng(location)
     }
 
-    /*
-     * CENTER MAP ON FIRST GPS POSITION
-     */
-    if (
-      pointsRef.current.length ===
-      0
-    ) {
-      map.setView(
-        location,
-        18
-      )
+    if (!gpsCenteredRef.current) {
+      map.setView(location, 18)
+      gpsCenteredRef.current = true
     }
 
-    /*
-     * GPS STATUS
-     */
-    if (
-      Number.isFinite(accuracy)
-    ) {
+    if (Number.isFinite(accuracy)) {
+      const roundedAccuracy = Math.round(accuracy)
+
       if (accuracy <= 10) {
-        setGpsStatus(
-          `GPS excellent • ${Math.round(
-            accuracy
-          )}m`
-        )
-      } else if (
-        accuracy <= 25
-      ) {
-        setGpsStatus(
-          `GPS good • ${Math.round(
-            accuracy
-          )}m`
-        )
-      } else if (
-        accuracy <= 50
-      ) {
-        setGpsStatus(
-          `GPS fair • ${Math.round(
-            accuracy
-          )}m`
-        )
+        setGpsStatus(`GPS excellent • ${roundedAccuracy} m`)
+      } else if (accuracy <= 25) {
+        setGpsStatus(`GPS good • ${roundedAccuracy} m`)
+      } else if (accuracy <= 50) {
+        setGpsStatus(`GPS fair • ${roundedAccuracy} m`)
       } else {
-        setGpsStatus(
-          `GPS weak • ${Math.round(
-            accuracy
-          )}m`
-        )
+        setGpsStatus(`GPS weak • ${roundedAccuracy} m`)
       }
     }
 
-    /*
-     * DON'T RECORD WHILE PAUSED
-     */
-    if (
-      !recording ||
-      paused
-    ) {
+    if (!recordingRef.current || pausedRef.current) {
       return
     }
 
-    /*
-     * JITTER FILTER
-     *
-     * Ignore extremely tiny GPS movements.
-     */
-    const previous =
-      pointsRef.current[
-        pointsRef.current.length - 1
-      ]
+    // Avoid recording GPS fixes with poor accuracy.
+    if (!Number.isFinite(accuracy) || accuracy > 50) {
+      return
+    }
+
+    const previous = pointsRef.current[pointsRef.current.length - 1]
 
     if (previous) {
-      const latDifference =
-        Math.abs(
-          latitude -
-            Number(previous[0])
-        )
+      const movement = calculateRouteDistance([
+        previous,
+        location,
+      ])
 
-      const lngDifference =
-        Math.abs(
-          longitude -
-            Number(previous[1])
-        )
-
-      if (
-        latDifference <
-          0.00001 &&
-        lngDifference <
-          0.00001
-      ) {
+      // Ignore GPS jitter and very small movements.
+      if (movement < 2) {
         return
       }
     }
 
-    const nextPoints = [
-      ...pointsRef.current,
-      location,
-    ]
+    const nextPoints = [...pointsRef.current, location]
 
-    pointsRef.current =
-      nextPoints
-
+    pointsRef.current = nextPoints
     setPoints(nextPoints)
+    setDistance(calculateRouteDistance(nextPoints))
 
-    const nextDistance =
-      calculateRouteDistance(
-        nextPoints
-      )
-
-    setDistance(
-      nextDistance
-    )
-
-    if (
-      routeLineRef.current
-    ) {
-      routeLineRef.current.setLatLngs(
-        nextPoints
-      )
+    if (routeLineRef.current) {
+      routeLineRef.current.setLatLngs(nextPoints)
     }
-  }
+  }, [])
 
-  /*
-   * GPS ERROR
-   */
-  function handleGpsError(
-    geoError
-  ) {
-    if (
-      geoError.code === 1
-    ) {
-      setGpsStatus(
-        'GPS permission denied'
-      )
+  const handleGpsError = useCallback((geoError) => {
+    // Prevent a failed GPS watch from blocking future attempts.
+    stopGpsWatch()
 
+    recordingRef.current = false
+    pausedRef.current = false
+
+    setRecording(false)
+    setPaused(false)
+
+    if (geoError.code === 1) {
+      setGpsStatus('GPS permission denied')
       setError(
-        'Location permission was denied. Allow location access in your browser.'
+        'Location permission was denied. Allow location access in your browser settings.'
       )
-    } else if (
-      geoError.code === 2
-    ) {
-      setGpsStatus(
-        'GPS unavailable'
-      )
-
+    } else if (geoError.code === 2) {
+      setGpsStatus('GPS unavailable')
       setError(
-        'Your current location could not be detected.'
+        'Your location could not be detected. Check your device location settings.'
       )
-    } else if (
-      geoError.code === 3
-    ) {
-      setGpsStatus(
-        'GPS timed out'
-      )
-
+    } else if (geoError.code === 3) {
+      setGpsStatus('GPS timed out')
       setError(
-        'GPS took too long to respond. Try moving outside or into an open area.'
+        'GPS took too long to respond. Move to an open area and try again.'
       )
     } else {
-      setGpsStatus(
-        'GPS error'
-      )
-
-      setError(
-        'Could not read your GPS location.'
-      )
+      setGpsStatus('GPS error')
+      setError('Could not read your GPS location.')
     }
-  }
+  }, [stopGpsWatch])
 
-  /*
-   * START RECORDING
-   */
+  const startGpsWatch = useCallback(() => {
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.geolocation
+    ) {
+      setError('Your browser does not support GPS location.')
+      setGpsStatus('GPS not supported')
+      return false
+    }
+
+    if (watchIdRef.current !== null) {
+      return true
+    }
+
+    setError('')
+    setGpsStatus('Waiting for GPS...')
+
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        handleGpsPosition,
+        handleGpsError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 20000,
+        }
+      )
+
+      return true
+    } catch (err) {
+      console.error('Could not start GPS tracking:', err)
+
+      watchIdRef.current = null
+      setGpsStatus('GPS error')
+      setError('Could not start GPS tracking. Please try again.')
+
+      return false
+    }
+  }, [handleGpsPosition, handleGpsError])
+
   function startRecording() {
     setError('')
 
-    if (
-      !currentCampus
-    ) {
-      setError(
-        'Please select a campus before recording a road.'
-      )
+    if (!currentCampus) {
+      setError('Please select a campus before recording a road.')
       return
     }
 
-    const gpsStarted =
-      startGpsWatch()
-
-    if (!gpsStarted) {
+    if (!startGpsWatch()) {
       return
     }
+
+    recordingRef.current = true
+    pausedRef.current = false
 
     setRecording(true)
     setPaused(false)
-    setGpsStatus(
-      'Recording road...'
-    )
+    setGpsStatus('Recording road...')
   }
 
-  /*
-   * PAUSE
-   */
   function pauseRecording() {
-    setPaused(true)
+    pausedRef.current = true
 
-    setGpsStatus(
-      'Recording paused'
-    )
+    setPaused(true)
+    setGpsStatus('Recording paused')
   }
 
-  /*
-   * RESUME
-   */
   function resumeRecording() {
     setError('')
 
-    startGpsWatch()
+    if (!currentCampus) {
+      setError('Please select a campus before recording a road.')
+      return
+    }
 
+    if (!startGpsWatch()) {
+      return
+    }
+
+    recordingRef.current = true
+    pausedRef.current = false
+
+    setRecording(true)
     setPaused(false)
-
-    setGpsStatus(
-      'Recording road...'
-    )
+    setGpsStatus('Recording road...')
   }
 
-  /*
-   * STOP RECORDING
-   */
   function stopRecording() {
+    recordingRef.current = false
+    pausedRef.current = false
+
     setRecording(false)
     setPaused(false)
 
@@ -553,88 +409,76 @@ export default function RoadMapper() {
     )
   }
 
-  /*
-   * CLEAR RECORDING
-   */
   function clearRecording() {
-    setRecording(false)
-    setPaused(false)
+    recordingRef.current = false
+    pausedRef.current = false
 
     stopGpsWatch()
 
+    setRecording(false)
+    setPaused(false)
+
     pointsRef.current = []
+    gpsCenteredRef.current = false
 
     setPoints([])
     setDistance(0)
-
-    setGpsStatus(
-      'Ready to record'
-    )
-
     setError('')
+    setGpsStatus('Ready to record')
 
-    if (
-      routeLineRef.current
-    ) {
-      routeLineRef.current.setLatLngs(
-        []
-      )
+    setForm({
+      name: '',
+      roadType: 'Road',
+      description: '',
+      fieldNotes: '',
+    })
+
+    if (routeLineRef.current) {
+      routeLineRef.current.setLatLngs([])
     }
 
-    if (
-      currentMarkerRef.current
-    ) {
+    if (currentMarkerRef.current) {
       currentMarkerRef.current.remove()
+      currentMarkerRef.current = null
+    }
 
-      currentMarkerRef.current =
-        null
+    if (mapRef.current) {
+      mapRef.current.setView(
+        getCampusCenter(currentCampus),
+        DEFAULT_ZOOM
+      )
     }
   }
 
-  /*
-   * FORM CHANGE
-   */
-  function updateForm(
-    field,
-    value
-  ) {
+  function updateForm(field, value) {
     setForm((current) => ({
       ...current,
       [field]: value,
     }))
   }
 
-  /*
-   * SAVE ROAD
-   */
   async function saveRoad() {
     setError('')
 
-    if (
-      !currentCampus
-    ) {
-      setError(
-        'No campus selected.'
-      )
+    if (recordingRef.current) {
+      setError('Stop recording before saving the road.')
       return
     }
 
-    if (
-      pointsRef.current.length <
-      2
-    ) {
-      setError(
-        'Record at least two GPS points before saving.'
-      )
+    if (!currentCampus) {
+      setError('No campus selected.')
       return
     }
 
-    if (
-      !form.name.trim()
-    ) {
-      setError(
-        'Please enter a road name.'
-      )
+    const routePoints = pointsRef.current
+
+    if (routePoints.length < 2) {
+      setError('Record at least two GPS points before saving.')
+      return
+    }
+
+    if (!form.name.trim()) {
+      setError('Please enter a road name.')
       return
     }
 
@@ -642,42 +486,22 @@ export default function RoadMapper() {
 
     try {
       await createRoad({
-        campusId:
-          currentCampus.id,
-
-        name:
-          form.name.trim(),
-
-        roadType:
-          form.roadType,
-
-        description:
-          form.description.trim(),
-
-        fieldNotes:
-          form.fieldNotes.trim(),
-
-        distanceMeters:
-          calculateRouteDistance(
-            pointsRef.current
-          ),
-
-        geometry:
-          pointsRef.current,
+        campusId: currentCampus.id,
+        name: form.name.trim(),
+        roadType: form.roadType,
+        description: form.description.trim(),
+        fieldNotes: form.fieldNotes.trim(),
+        distanceMeters: calculateRouteDistance(routePoints),
+        geometry: routePoints,
       })
 
-      navigate(
-        '/collection'
-      )
+      // Open the saved-roads list after a successful save.
+      navigate('/saved-roads')
     } catch (err) {
-      console.error(
-        'Could not save road:',
-        err
-      )
+      console.error('Could not save road:', err)
 
       setError(
-        err.message ||
-          'Could not save this road.'
+        err?.message || 'Could not save this road. Please try again.'
       )
     } finally {
       setSaving(false)
@@ -687,65 +511,47 @@ export default function RoadMapper() {
   const canSave =
     points.length >= 2 &&
     form.name.trim().length > 0 &&
+    !recording &&
     !saving
 
   return (
     <>
-      <Header
-        title="Road Mapper"
-        backTo="/map"
-      />
+      <Header title="Road Mapper" backTo="/map" />
 
       <main className="road-recorder">
         <section className="road-map-card">
           <div
             ref={mapElementRef}
             className="road-map"
+            aria-label="Road recording map"
           />
 
           <div className="road-campus-badge">
             <span>📍</span>
 
             <div>
-              <small>
-                Recording for
-              </small>
-
+              <small>Recording for</small>
               <strong>
-                {currentCampus?.name ||
-                  'No campus selected'}
+                {currentCampus?.name || 'No campus selected'}
               </strong>
             </div>
           </div>
 
-          <div className="road-gps-status">
+          <div className="road-gps-status" role="status">
             <span className="cm-live-dot" />
-
             {gpsStatus}
           </div>
         </section>
 
         <section className="road-stats">
           <div>
-            <strong>
-              {formatDistance(
-                distance
-              )}
-            </strong>
-
-            <span>
-              Distance recorded
-            </span>
+            <strong>{formatDistance(distance)}</strong>
+            <span>Distance recorded</span>
           </div>
 
           <div>
-            <strong>
-              {points.length}
-            </strong>
-
-            <span>
-              GPS points
-            </span>
+            <strong>{points.length}</strong>
+            <span>GPS points</span>
           </div>
 
           <div>
@@ -756,330 +562,203 @@ export default function RoadMapper() {
                   : 'Live'
                 : 'Stopped'}
             </strong>
-
-            <span>
-              Status
-            </span>
+            <span>Status</span>
           </div>
         </section>
 
         <section className="road-controls">
-          {!recording &&
-            points.length === 0 && (
+          {!recording && points.length === 0 && (
+            <button
+              type="button"
+              className="road-primary-button"
+              onClick={startRecording}
+              disabled={!currentCampus || saving}
+            >
+              📍 Start Recording
+            </button>
+          )}
+
+          {recording && !paused && (
+            <>
+              <button
+                type="button"
+                className="road-secondary-button"
+                onClick={pauseRecording}
+              >
+                ⏸ Pause
+              </button>
+
+              <button
+                type="button"
+                className="road-danger-button"
+                onClick={stopRecording}
+              >
+                ■ Stop
+              </button>
+            </>
+          )}
+
+          {recording && paused && (
+            <>
               <button
                 type="button"
                 className="road-primary-button"
-                onClick={
-                  startRecording
-                }
+                onClick={resumeRecording}
               >
-                📍 Start Recording
+                ▶ Resume
               </button>
-            )}
 
-          {recording &&
-            !paused && (
-              <>
-                <button
-                  type="button"
-                  className="road-secondary-button"
-                  onClick={
-                    pauseRecording
-                  }
-                >
-                  ⏸ Pause
-                </button>
+              <button
+                type="button"
+                className="road-danger-button"
+                onClick={stopRecording}
+              >
+                ■ Stop
+              </button>
+            </>
+          )}
 
-                <button
-                  type="button"
-                  className="road-danger-button"
-                  onClick={
-                    stopRecording
-                  }
-                >
-                  ■ Stop
-                </button>
-              </>
-            )}
+          {!recording && points.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="road-primary-button"
+                onClick={resumeRecording}
+                disabled={saving}
+              >
+                ▶ Continue
+              </button>
 
-          {recording &&
-            paused && (
-              <>
-                <button
-                  type="button"
-                  className="road-primary-button"
-                  onClick={
-                    resumeRecording
-                  }
-                >
-                  ▶ Resume
-                </button>
-
-                <button
-                  type="button"
-                  className="road-danger-button"
-                  onClick={
-                    stopRecording
-                  }
-                >
-                  ■ Stop
-                </button>
-              </>
-            )}
-
-          {!recording &&
-            points.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  className="road-primary-button"
-                  onClick={
-                    resumeRecording
-                  }
-                >
-                  ▶ Continue
-                </button>
-
-                <button
-                  type="button"
-                  className="road-danger-button"
-                  onClick={
-                    clearRecording
-                  }
-                >
-                  🗑 Clear
-                </button>
-              </>
-            )}
+              <button
+                type="button"
+                className="road-danger-button"
+                onClick={clearRecording}
+                disabled={saving}
+              >
+                🗑 Clear
+              </button>
+            </>
+          )}
         </section>
 
         {error && (
-          <div
-            className="road-error"
-            role="alert"
-          >
-            <strong>
-              Road Mapper
-            </strong>
-
-            <span>
-              {error}
-            </span>
+          <div className="road-error" role="alert">
+            <strong>Road Mapper</strong>
+            <span>{error}</span>
           </div>
         )}
 
-        {points.length >= 2 &&
-          !recording && (
-            <section className="road-form">
-              <div className="road-form-heading">
-                <div>
-                  <small>
-                    Route recorded
-                  </small>
-
-                  <h2>
-                    Save this road
-                  </h2>
-                </div>
-
-                <span>
-                  {formatDistance(
-                    distance
-                  )}
-                </span>
+        {points.length >= 2 && !recording && (
+          <section className="road-form">
+            <div className="road-form-heading">
+              <div>
+                <small>Route recorded</small>
+                <h2>Save this road</h2>
               </div>
 
-              <label>
-                <span>
-                  Road name *
-                </span>
+              <span>{formatDistance(distance)}</span>
+            </div>
 
-                <input
-                  type="text"
-                  value={
-                    form.name
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    updateForm(
-                      'name',
-                      event.target
-                        .value
-                    )
-                  }
-                  placeholder="e.g. Main Campus Road"
-                />
-              </label>
+            <label>
+              <span>Road name *</span>
 
-              <label>
-                <span>
-                  Road type
-                </span>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(event) =>
+                  updateForm('name', event.target.value)
+                }
+                placeholder="e.g. Main Campus Road"
+                required
+                maxLength={150}
+              />
+            </label>
 
-                <select
-                  value={
-                    form.roadType
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    updateForm(
-                      'roadType',
-                      event.target
-                        .value
-                    )
-                  }
-                >
-                  <option value="Road">
-                    Road
-                  </option>
+            <label>
+              <span>Road type</span>
 
-                  <option value="Walkway">
-                    Walkway
-                  </option>
+              <select
+                value={form.roadType}
+                onChange={(event) =>
+                  updateForm('roadType', event.target.value)
+                }
+              >
+                <option value="Road">Road</option>
+                <option value="Walkway">Walkway</option>
+                <option value="Path">Footpath</option>
+                <option value="Driveway">Driveway</option>
+                <option value="Parking">Parking route</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
 
-                  <option value="Path">
-                    Footpath
-                  </option>
+            <label>
+              <span>Description</span>
 
-                  <option value="Driveway">
-                    Driveway
-                  </option>
+              <textarea
+                value={form.description}
+                onChange={(event) =>
+                  updateForm('description', event.target.value)
+                }
+                placeholder="Describe where this road leads."
+                rows={3}
+              />
+            </label>
 
-                  <option value="Parking">
-                    Parking route
-                  </option>
+            <label>
+              <span>Field notes</span>
 
-                  <option value="Other">
-                    Other
-                  </option>
-                </select>
-              </label>
+              <textarea
+                value={form.fieldNotes}
+                onChange={(event) =>
+                  updateForm('fieldNotes', event.target.value)
+                }
+                placeholder="Add useful notes from the field."
+                rows={3}
+              />
+            </label>
 
-              <label>
-                <span>
-                  Description
-                </span>
+            <div className="road-save-actions">
+              <button
+                type="button"
+                className="road-save-button"
+                onClick={saveRoad}
+                disabled={!canSave}
+              >
+                {saving ? 'Saving road...' : '💾 Save Road'}
+              </button>
 
-                <textarea
-                  value={
-                    form.description
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    updateForm(
-                      'description',
-                      event.target
-                        .value
-                    )
-                  }
-                  placeholder="Describe where this road leads."
-                  rows={3}
-                />
-              </label>
-
-              <label>
-                <span>
-                  Field notes
-                </span>
-
-                <textarea
-                  value={
-                    form.fieldNotes
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    updateForm(
-                      'fieldNotes',
-                      event.target
-                        .value
-                    )
-                  }
-                  placeholder="Add useful notes from the field."
-                  rows={3}
-                />
-              </label>
-
-              <div className="road-save-actions">
-                <button
-                  type="button"
-                  className="road-save-button"
-                  onClick={
-                    saveRoad
-                  }
-                  disabled={
-                    !canSave
-                  }
-                >
-                  {saving
-                    ? 'Saving road...'
-                    : '💾 Save Road'}
-                </button>
-
-                <button
-                  type="button"
-                  className="road-cancel-button"
-                  onClick={
-                    clearRecording
-                  }
-                  disabled={
-                    saving
-                  }
-                >
-                  Discard
-                </button>
-              </div>
-            </section>
-          )}
+              <button
+                type="button"
+                className="road-cancel-button"
+                onClick={clearRecording}
+                disabled={saving}
+              >
+                Discard
+              </button>
+            </div>
+          </section>
+        )}
 
         <section className="road-help">
-          <strong>
-            🛣️ How Road Mapper works
-          </strong>
+          <strong>🛣️ How Road Mapper works</strong>
 
           <p>
-            Walk or drive along the campus
-            road while CampusMapper records
-            your GPS path. Stop when you reach
-            the end, then save the road with
-            its name and notes.
+            Walk along the campus road while CampusMapper records
+            your GPS path. Stop when you reach the end, then save
+            the road with its name and notes. Good GPS accuracy
+            helps produce a more reliable route.
           </p>
 
           <div>
-            <span>
-              1
-            </span>
-
-            <span>
-              Start recording
-            </span>
-
-            <span>
-              →
-            </span>
-
-            <span>
-              2
-            </span>
-
-            <span>
-              Follow the road
-            </span>
-
-            <span>
-              →
-            </span>
-
-            <span>
-              3
-            </span>
-
-            <span>
-              Stop & save
-            </span>
+            <span>1</span>
+            <span>Start recording</span>
+            <span>→</span>
+            <span>2</span>
+            <span>Follow the road</span>
+            <span>→</span>
+            <span>3</span>
+            <span>Stop &amp; save</span>
           </div>
         </section>
       </main>

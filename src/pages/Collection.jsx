@@ -85,7 +85,7 @@ export default function Collection() {
             }}
           >
             <Link
-              to="/roads/new"
+              to="/road-mapper"
               className="header-link"
             >
               🛣️ Road

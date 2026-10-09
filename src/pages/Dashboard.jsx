@@ -575,7 +575,7 @@ export default function Dashboard() {
             </Link>
 
             <Link
-              to="/roads/new"
+              to="/road-mapper"
               className="quick-action"
             >
               <span className="quick-action-icon">
@@ -648,7 +648,7 @@ export default function Dashboard() {
             </Link>
 
             <Link
-              to="/roads"
+              to="/saved-roads"
               className="collection-link"
             >
               <span className="collection-link-icon">

@@ -4,15 +4,17 @@ import Header from '../components/Header'
 import { deleteRoad, fetchRoads } from '../lib/roads'
 
 function formatDistance(meters) {
-  if (!meters || meters < 1) {
+  const value = Number(meters)
+
+  if (!Number.isFinite(value) || value < 1) {
     return '0 m'
   }
 
-  if (meters >= 1000) {
-    return `${(meters / 1000).toFixed(2)} km`
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)} km`
   }
 
-  return `${Math.round(meters)} m`
+  return `${Math.round(value)} m`
 }
 
 export default function SavedRoads() {
@@ -27,9 +29,9 @@ export default function SavedRoads() {
 
     try {
       const data = await fetchRoads()
-      setRoads(data)
+      setRoads(Array.isArray(data) ? data : [])
     } catch (err) {
-      setError(err.message || 'Could not load saved roads')
+      setError(err?.message || 'Could not load saved roads')
     }
   }
 
@@ -42,9 +44,7 @@ export default function SavedRoads() {
       'Delete this saved road? This cannot be undone.'
     )
 
-    if (!confirmed) {
-      return
-    }
+    if (!confirmed) return
 
     setDeletingId(id)
     setError('')
@@ -56,7 +56,7 @@ export default function SavedRoads() {
         (current || []).filter((road) => road.id !== id)
       )
     } catch (err) {
-      setError(err.message || 'Could not delete road')
+      setError(err?.message || 'Could not delete road')
     } finally {
       setDeletingId(null)
     }
@@ -68,7 +68,7 @@ export default function SavedRoads() {
         title="Saved Roads"
         backTo="/"
         action={
-          <Link to="/roads/new" className="header-link">
+          <Link to="/road-mapper" className="header-link">
             + Road
           </Link>
         }
@@ -77,7 +77,7 @@ export default function SavedRoads() {
       <main className="page">
         {error && (
           <div className="banner banner-error" role="alert">
-            {error}
+            <p>{error}</p>
 
             <button
               type="button"
@@ -89,13 +89,11 @@ export default function SavedRoads() {
           </div>
         )}
 
-        {!roads && !error && (
-          <p className="muted">
-            Loading saved roads...
-          </p>
+        {roads === null && !error && (
+          <p className="muted">Loading saved roads...</p>
         )}
 
-        {roads && (
+        {roads !== null && (
           <>
             <p className="count">
               {roads.length}{' '}
@@ -111,7 +109,7 @@ export default function SavedRoads() {
                 </p>
 
                 <Link
-                  to="/roads/new"
+                  to="/road-mapper"
                   className="btn btn-flag"
                 >
                   🛣️ Record Road
@@ -120,11 +118,14 @@ export default function SavedRoads() {
             ) : (
               <div className="card-list">
                 {roads.map((road) => (
-                  <article className="location-card" key={road.id}>
+                  <article
+                    className="location-card"
+                    key={road.id}
+                  >
                     <div className="location-card-main">
                       <div>
                         <h2 className="location-card-title">
-                          🛣️ {road.name}
+                          🛣️ {road.name || 'Unnamed road'}
                         </h2>
 
                         <p className="location-card-meta">
@@ -158,11 +159,7 @@ export default function SavedRoads() {
                       <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={() =>
-                          navigate(
-                            `/roads/new?edit=${road.id}`
-                          )
-                        }
+                        onClick={() => navigate('/road-mapper')}
                       >
                         View / Edit
                       </button>
@@ -171,9 +168,7 @@ export default function SavedRoads() {
                         type="button"
                         className="btn btn-secondary"
                         disabled={deletingId === road.id}
-                        onClick={() =>
-                          handleDelete(road.id)
-                        }
+                        onClick={() => handleDelete(road.id)}
                       >
                         {deletingId === road.id
                           ? 'Deleting...'
